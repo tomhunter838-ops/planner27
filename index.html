@@ -612,6 +612,19 @@ html[data-photo="band"] #photobg i{inset:0;filter:none}
 html[data-photo] :is(.card,body:not([data-lay="phone"]) .bcol,.t,.next,.driver,dialog,#tabbar,#addbar,#toast,#undotoast,#selbar,.donechip,.gymtick){--muted:var(--muted-0);--faint:var(--faint-0);--done:var(--done-0);--p-ink:var(--p-ink-0);--w-ink:var(--w-ink-0);--good-ink:var(--good-ink-0);--gold-ink:var(--gold-ink-0);--late-ink:var(--late-ink-0)}
 @media (prefers-reduced-motion:reduce){html[data-photo]{--muted:var(--muted-0)!important;--faint:var(--faint-0)!important;--done:var(--done-0)!important;--p-ink:var(--p-ink-0)!important;--w-ink:var(--w-ink-0)!important;--good-ink:var(--good-ink-0)!important;--gold-ink:var(--gold-ink-0)!important;--late-ink:var(--late-ink-0)!important}}
 @media print{html[data-photo]{--muted:var(--muted-0)!important;--faint:var(--faint-0)!important;--done:var(--done-0)!important;--p-ink:var(--p-ink-0)!important;--w-ink:var(--w-ink-0)!important;--good-ink:var(--good-ink-0)!important;--gold-ink:var(--gold-ink-0)!important;--late-ink:var(--late-ink-0)!important}}
+/* A row with a job chip: the words come first. If the whole label fits on one line beside the chip, bell, step count and
+   Move, the row is one line as before. If it does not, those drop together to a second line under the label (at the
+   right) and the label has the whole first line to itself, so the chip never costs a word and never breaks one. The
+   chip is never hidden or cut. Rows without a job are untouched by these rules. */
+.t.hasjob{flex-wrap:wrap;--labmax:calc(100% - 30px)}
+.t.hasjob.hasgrip{--labmax:calc(100% - 42px)}
+.t.hasjob .lab{flex:1 1 auto;min-width:0;max-width:var(--labmax)}
+.t.hasjob .lab .lt{overflow-wrap:break-word;word-break:normal}
+.t.hasjob:not(.done) .lab .lt{-webkit-line-clamp:3}
+.t.hasjob .tail{display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:0 4px;flex:0 0 auto;margin-left:auto;min-width:0;max-width:100%}
+.t.hasjob .pill.job{max-width:none;overflow:visible}
+body[data-lay="phone"] .t.hasjob,body[data-touch="1"] .t.hasjob{--labmax:calc(100% - 42px)}
+body[data-lay="phone"] .t.hasjob.hasgrip,body[data-touch="1"] .t.hasjob.hasgrip{--labmax:calc(100% - 54px)}
 </style>
 </head>
 <body>
@@ -1348,7 +1361,9 @@ function adoptRemote(remote, etag){
   const mergeList=(loc,rem)=>{ const l=Array.isArray(loc)?loc:[], r=Array.isArray(rem)?rem:[]; const seen=new Set(r.map(x=>x&&x.label)); return l.filter(x=>x&&!seen.has(x.label)).concat(r); };
   const keptInbox=mergeList(DB.inbox, remote.inbox), keptShop=mergeList(DB.shopping, remote.shopping);
   DB.weeks=remote.weeks; DB.recur=remote.recur||DB.recur; if(remote.projects)DB.projects=remote.projects; DB.inbox=keptInbox; DB.shopping=keptShop; mergeHealth(remote.health); if(remote.gym)DB.gym=remote.gym;
+  const _myJL=DB.jobList, _dirtyA=Number.isInteger(DB.rev)&&DB.rev!==odState.baseRev;
   P27_EXTRA.forEach(k=>{ if(remote[k]!==undefined) DB[k]=remote[k]; });   /* 2.7 (2.5) */
+  const _again=mineReapply(remote,_myJL,_dirtyA);
   DB.savedAt=+remote.savedAt||DB.savedAt;
   DB.rev = Number.isInteger(remote.rev) ? remote.rev : (Number.isInteger(DB.rev)?DB.rev:1);
   reseedUID(DB);
@@ -1359,7 +1374,8 @@ function adoptRemote(remote, etag){
                           stored read describes a copy that no longer exists — drop them rather
                           than let a confident, correctly-timestamped card describe the old one. */
   render();
-  odLog('pull-adopt', {rev:DB.rev, tasks:countTasksIn(DB).tasks, dated:datedCount(DB)});
+  odLog('pull-adopt', {rev:DB.rev, tasks:countTasksIn(DB).tasks, dated:datedCount(DB), again:_again?1:0});
+  if(_again) setTimeout(()=>{ try{ saveDB(); }catch(e){} }, 60);
 }
 async function odReconcile(){
   const m=await odItemMeta();                                   /* 2.7 (R1): the etag of the copy we are about to show */
@@ -1409,7 +1425,7 @@ async function _odPush(){
   try{ reconcileWithStored(); }catch(e){}
   odState.syncing=true; updateSyncBadge();
   try{
-    const payload=exportShape();
+    const payload=exportShape(); const _mineAtPush=mineRaw();
     const pushedRev=DB.rev;                                 /* v2.2 (integrity review F1): the rev this PUT actually carries */
     await odMaybeBackup();                                  /* 2.7 (R4): rolling backups, never overwritten */
     let meta=await gPutIfMatch(OD.file, payload, odState.etag);
@@ -1450,7 +1466,7 @@ async function _odPush(){
        made this device silently out-rank a newer cloud: the FAULT 2 class by another door).
        If a newer save exists, it stays pending and the push re-arms. */
     odState.baseRev=pushedRev; odPersistMeta();
-    odLog('push-ok', {rev:pushedRev, tasks:countTasksIn(DB).tasks, dated:datedCount(DB)});
+    odLog('push-ok', {rev:pushedRev, tasks:countTasksIn(DB).tasks, dated:datedCount(DB)}); minePushed(_mineAtPush);
     odState.lastSync=Date.now(); odState.error=null; _syncRetryN=0;
     if(DB.rev===pushedRev){ _pushPending=false; } else { _pushPending=true; clearTimeout(_syncT); _syncT=setTimeout(odPush, 400); }
   }catch(e){
@@ -1589,7 +1605,7 @@ async function openReconcile(){
     if(!adopted.weeks){ flashToast('Cloud file has no weeks — not importing'); closeDialog(); return; }
     migrate(adopted); const after=countTasksIn(adopted).tasks;
     if(after<before){ flashToast('Import would drop tasks — aborted, nothing changed'); closeDialog(); return; }  // migration must never shrink the adopted copy
-    const doAdopt=()=>{
+    const doAdopt=()=>{ mineClear();
       DB.weeks=adopted.weeks; DB.recur=adopted.recur||DB.recur; if(adopted.projects)DB.projects=adopted.projects; if(adopted.inbox)DB.inbox=adopted.inbox; if(adopted.shopping)DB.shopping=adopted.shopping; mergeHealth(adopted.health); if(adopted.gym)DB.gym=adopted.gym;
       P27_EXTRA.forEach(k=>{ if(adopted[k]!==undefined) DB[k]=adopted[k]; });   /* 2.7 (2.5) */
       /* 2.7 (R1): carry the revision — max(local, cloud), then saveDB adds 1 — and record the etag and
@@ -3902,7 +3918,7 @@ function taskRow(t, ctx, opts={}){
   const job=(t.job&&t.job.no)?`<span class="pill job" title="${attr(t.job.no+' · '+(t.job.name||''))}">${esc(t.job.no)}</span>`:'';
   const grip=opts.grip?`<span class="grip" data-act="grip" aria-hidden="true">⠿</span>`:'';
   const mv=opts.nomove?'':`<button class="mvbtn" data-act="movesheet" title="Move to…" aria-label="Move task: ${attr(short)}">${IC.move}</button>`;
-  let html=`<div class="t ${t.kind==='work'?'kwork':''} ${t.done?'done':''} ${ui.selMode&&ui.sel.has(t.id)?'seled':''} ${opts.cls||''}" ${sel}>${grip}<button class="check" data-act="check" aria-pressed="${!!t.done}" aria-label="${t.done?'Done, tick to undo':'Complete'}: ${attr(short)}">${CHK}</button><span class="lab" data-act="edit" role="button" tabindex="0"${t.label.length>40?` title="${attr(t.label)}"`:''}><span class="lt"${(opts.num&&!t.done)?` data-num="${opts.num}"`:''}>${esc(t.label)}</span></span>${tag}${job}${bell}${subsPill}${mv}</div>`;
+  let html=`<div class="t ${t.kind==='work'?'kwork':''} ${t.done?'done':''} ${ui.selMode&&ui.sel.has(t.id)?'seled':''} ${opts.cls||''}${job?' hasjob'+(opts.grip?' hasgrip':''):''}" ${sel}>${grip}<button class="check" data-act="check" aria-pressed="${!!t.done}" aria-label="${t.done?'Done, tick to undo':'Complete'}: ${attr(short)}">${CHK}</button><span class="lab" data-act="edit" role="button" tabindex="0"${t.label.length>40?` title="${attr(t.label)}"`:''}><span class="lt"${(opts.num&&!t.done)?` data-num="${opts.num}"`:''}>${esc(t.label)}</span></span>${job?`<span class="tail">${tag}${job}${bell}${subsPill}${mv}</span>`:`${tag}${bell}${subsPill}${mv}`}</div>`;
   if(t.open && sc && !opts.nosubs){
     html+=`<div class="subs" ${sel}>${t.subs.map((s,j)=>`<div class="sub ${s.done?'done':''}" data-sub="${j}" data-sid="${attr(s.id)}"><button class="subcheck" data-act="subcheck" aria-pressed="${!!s.done}" aria-label="Step: ${attr(s.label)}">${CHK}</button><span class="lab"${j<26?` data-ltr="${String.fromCharCode(65+j)}"`:''}>${esc(s.label)}</span><button class="x" data-act="delsub" aria-label="Remove step: ${attr(s.label)}">×</button></div>`).join('')}<button class="sub add" data-act="addsub">+ Add a step</button></div>`;
   }
@@ -4699,15 +4715,21 @@ function gfetch(url, opts){ if(typeof AbortController==='undefined') return fetc
    ===================================================================================================== */
 const JOB_MIN_YEAR=25;
 function normJobNo(s){ let t=String(s==null?'':s).replace(/\s+/g,'').toUpperCase(); if(/^JI/.test(t)) t='J1'+t.slice(2); return /^J\d{5}$/.test(t)?t:null; }
-function jobStart(line){ return /^\s*J\s*[\dI](\s*\d)/i.test(line); }
+/* the heading of the job-number column, however it is spaced or cased: "Job No", "JOB NO.", "Job Number", "J o b  N o" */
+function isJobHeader(c){ return /^job(no|number|num|nr|ref|#)?$/.test(String(c==null?'':c).replace(/[\s.: ]+/g,'').toLowerCase()); }
+/* looks like somebody meant a job number (J2I001, JO25203): a short J-token with a digit in it */
+function jobLike(c){ const t=String(c==null?'':c).replace(/\s+/g,''); return /^J[0-9A-Z]{4,7}$/i.test(t) && /\d/.test(t); }
+function jobStart(line){ return /^\s*J\s*[\dI](\s*\d)/i.test(line) || jobLike(String(line).split('\t')[0]); }
 function jobsFromRows(rows){
-  const map=new Map(); let bad=0, dup=0, old=0;
-  (rows||[]).forEach(r=>{ const c0=String(r[0]==null?'':r[0]).trim(); if(!c0 && !String(r[1]==null?'':r[1]).trim()) return; if(/^job\s*no/i.test(c0)) return;
+  const map=new Map(); let bad=0, dup=0, old=0; const dups=[], odd=[]; const yy=new Date().getFullYear()%100;
+  (rows||[]).forEach(r=>{ const c0=String(r[0]==null?'':r[0]).trim(); if(!c0 && !String(r[1]==null?'':r[1]).trim()) return; if(isJobHeader(c0)) return;
     const no=normJobNo(c0); if(!no){ bad++; return; }
     const name=String(r[1]==null?'':r[1]).replace(/\s+/g,' ').trim().slice(0,120);
+    if(!name){ bad++; return; }                                   // a number with no name is not a job
     if(+no.slice(1,3)<JOB_MIN_YEAR){ old++; return; }
-    if(map.has(no)){ dup++; map.delete(no); } map.set(no,{no,name}); });
-  return { items:[...map.values()].sort((a,b)=>a.no<b.no?1:a.no>b.no?-1:0), bad, dup, old };
+    if(map.has(no)){ dup++; dups.push({no, kept:map.get(no).name, other:name}); return; }   // the first one is kept; both are shown to him
+    map.set(no,{no,name}); if(+no.slice(1,3)>yy+1) odd.push(no); });
+  return { items:[...map.values()].sort((a,b)=>a.no<b.no?1:a.no>b.no?-1:0), bad, dup, old, dups, odd };
 }
 /* Word gives one line per row with tabs between cells; a wrapped cell can arrive as a second line, which is joined to the row before */
 function rowsFromPaste(text){ const lines=[]; String(text||'').split(/\r?\n/).forEach(l=>{ if(!l.trim()) return; if(jobStart(l) || /^\s*job\s*no/i.test(l) || !lines.length) lines.push(l); else lines[lines.length-1]+=' '+l; }); return lines.map(l=>l.split('\t')); }
@@ -4726,9 +4748,36 @@ async function rowsFromDocx(file){
   const xml=new TextDecoder('utf-8').decode(await zipEntry(await file.arrayBuffer(),'word/document.xml')); const doc=new DOMParser().parseFromString(xml,'application/xml'); if(doc.getElementsByTagName('parsererror').length) throw new Error('The file could not be read.');
   const kids=(el,nm)=>[...el.children].filter(c=>c.nodeName===nm);
   const cellText=tc=>[...tc.getElementsByTagName('w:p')].map(p=>{ let s=''; const walk=nd=>{ for(const c of nd.childNodes){ if(c.nodeName==='w:t') s+=c.textContent; else if(c.nodeName==='w:tab'||c.nodeName==='w:br'||c.nodeName==='w:cr') s+=' '; else if(c.nodeType===1) walk(c); } }; walk(p); return s; }).join(' ');
-  const rows=[]; [...doc.getElementsByTagName('w:tbl')].forEach(tbl=>kids(tbl,'w:tr').forEach(tr=>{ const cells=kids(tr,'w:tc'); if(cells.length) rows.push(cells.map(cellText)); }));
+  /* a table inside a text box is stored twice (once as the fallback drawing): read it once */
+  const under=(el,nm)=>{ for(let a=el.parentNode;a;a=a.parentNode){ if(a.nodeName===nm) return true; } return false; };
+  const tables=[...doc.getElementsByTagName('w:tbl')].filter(t=>!under(t,'mc:Fallback')).map(tbl=>kids(tbl,'w:tr').map(tr=>kids(tr,'w:tc').map(cellText)).filter(c=>c.length)).filter(t=>t.length);
+  /* only tables whose first row starts with the job-number heading are the job list; another table that happens to have job
+     numbers in its first column (fees, drawings) must not rename a job. With no such heading anywhere, read everything and say so. */
+  const first=t=>t.find(r=>r.some(c=>String(c).trim()));
+  const headed=tables.filter(t=>{ const r=first(t); return !!r && isJobHeader(r[0]); });
+  const rows=[].concat(...(headed.length?headed:tables));
+  rows.noHeader=!headed.length && tables.length>0;
+  rows.skipped=headed.length?tables.filter(t=>!headed.includes(t) && t.some(r=>jobLike(r[0]))).length:0;
   return rows;
 }
+/* ---------- job changes this device has made and not yet pushed (a device-only note, key p27:od:mine) ----------
+   The sync arbiter compares tasks by place, words and tick only. So when it takes the OneDrive copy after two devices
+   saved at once, it would silently drop a job just put on a task, or a job list just refreshed, on this device. Such
+   changes are noted here as he makes them, put back after that kind of adopt (and then pushed), and forgotten as soon
+   as a push has carried them. The note is never in the store and is ignored when this device has nothing unpushed. */
+const MINE_KEY='p27:od:mine';
+function mineRaw(){ try{ return localStorage.getItem(MINE_KEY); }catch(e){ return null; } }
+function mineRead(){ try{ const m=JSON.parse(mineRaw()||'null'); return (m&&typeof m==='object')?m:null; }catch(e){ return null; } }
+function mineWrite(m){ try{ if(m) localStorage.setItem(MINE_KEY, JSON.stringify(m)); else localStorage.removeItem(MINE_KEY); }catch(e){} }
+function mineClear(){ mineWrite(null); }
+function mineOn(){ try{ return !!(odState && odState.connected && odState.live); }catch(e){ return false; } }
+function mineJob(id, job){ if(!mineOn()) return; const m=mineRead()||{}; m.jobs=m.jobs||{}; m.jobs[id]=job?{no:job.no,name:job.name}:null; mineWrite(m); }
+function mineList(){ if(!mineOn()) return; const m=mineRead()||{}; m.jl=Date.now(); mineWrite(m); }
+function minePushed(rawAtPush){ if(rawAtPush!=null && mineRaw()===rawAtPush) mineClear(); }
+function mineReapply(remote, myList, dirty){ const m=mineRead(); if(!m) return false; if(!dirty){ mineClear(); return false; } let ch=false;
+  if(m.jl){ const rAt=(remote&&remote.jobList&&+remote.jobList.refreshedAt)||0; if(m.jl>rAt && JSON.stringify(myList===undefined?null:myList)!==JSON.stringify(DB.jobList===undefined?null:DB.jobList)){ if(myList===undefined) delete DB.jobList; else DB.jobList=myList; ch=true; } }
+  Object.keys(m.jobs||{}).forEach(id=>{ const c=findTaskById(id); if(!c) return; const want=m.jobs[id]; if(JSON.stringify(c.t.job||null)===JSON.stringify(want||null)) return; if(want) c.t.job={no:want.no,name:want.name}; else delete c.t.job; ch=true; });
+  return ch; }
 function jobItems(){ return (DB.jobList&&Array.isArray(DB.jobList.items))?DB.jobList.items:[]; }
 function jobListLine(){ const L=DB.jobList; if(!L||!Array.isArray(L.items)) return 'No job list yet';
   const day=ts=>{ const d=new Date(ts); const iso=isoOf(d.getFullYear(),d.getMonth(),d.getDate()); return iso===todayISO?'today':d.getDate()+' '+MON[d.getMonth()]; };
@@ -4736,7 +4785,8 @@ function jobListLine(){ const L=DB.jobList; if(!L||!Array.isArray(L.items)) retu
   return 'From '+(L.source||'a pasted list')+ch+(L.refreshedAt?' · refreshed '+day(L.refreshedAt)+' '+hhmm(L.refreshedAt):'')+' · J'+JOB_MIN_YEAR+' and later'; }
 function jobOptions(t, q){
   const L=jobItems(); const cur=(t.job&&t.job.no)?t.job:null; const inList=!!cur&&L.some(j=>j.no===cur.no); const f=String(q||'').trim().toLowerCase();
-  const cut=s=>{ s=String(s||''); return s.length>64?s.slice(0,63)+'…':s; }; const opt=(v,txt,sel)=>`<option value="${attr(v)}"${sel?' selected':''}>${esc(txt)}</option>`; const hit=j=>!f||j.no.toLowerCase().includes(f)||String(j.name||'').toLowerCase().includes(f);
+  const fn=f.replace(/\s+/g,'');   // "J26 004" finds J26004
+  const cut=s=>{ s=String(s||''); return s.length>64?s.slice(0,63)+'…':s; }; const opt=(v,txt,sel)=>`<option value="${attr(v)}"${sel?' selected':''}>${esc(txt)}</option>`; const hit=j=>!f||j.no.toLowerCase().includes(fn)||String(j.name||'').toLowerCase().includes(f)||(fn.length>1&&String(j.name||'').toLowerCase().replace(/\s+/g,'').includes(fn));
   let h=opt('','No job',!cur);
   if(cur&&!inList) h+=opt(cur.no, cur.no+' · '+cut(cur.name)+' (not in current list)', true);
   else if(cur&&f&&!hit(cur)) h+=opt(cur.no, cur.no+' · '+cut(cur.name), true);
@@ -4753,28 +4803,35 @@ function wireJobField(id, saved){
     if(v==='__refresh'){ flushSheetLabel(); closeDialog(); openJobRefresh(id); return; }
     const was=c.t.job?JSON.parse(JSON.stringify(c.t.job)):null;
     if(!v) delete c.t.job; else { const j=jobItems().find(x=>x.no===v) || ((was&&was.no===v)?was:null); if(!j) return; c.t.job={ no:j.no, name:j.name }; }
-    saved(); setUndo('change the job on “'+c.t.label.slice(0,30)+'”', ()=>{ const c2=findTaskById(id); if(c2){ if(was) c2.t.job=was; else delete c2.t.job; saveDB(); render(); } }); });
+    mineJob(id, c.t.job||null);
+    saved(); setUndo('change the job on “'+c.t.label.slice(0,30)+'”', ()=>{ const c2=findTaskById(id); if(c2){ if(was) c2.t.job=was; else delete c2.t.job; mineJob(id, was); saveDB(); render(); } }); });
 }
 function openJobRefresh(returnId){
   let pending=null;
   openDialog(`<h3>Refresh job numbers</h3><p>Open the job list in Word, select the table (Ctrl+A), copy, and paste here.</p>
     <textarea id="job-paste" aria-label="Paste the job list here" placeholder="Paste here" style="min-height:96px"></textarea>
     ${isLap()?`<div class="frow" style="margin-top:8px"><button type="button" class="hb" data-x="file" style="min-height:44px">Choose the Word file…</button></div>`:''}<input type="file" id="job-file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden />
-    <p id="job-prev" role="status" style="margin:12px 0 0;color:var(--ink-2);font-size:14px;min-height:20px"></p><p class="note">Only the job number and the project name are kept. J${JOB_MIN_YEAR} and later.</p>
+    <p id="job-prev" role="status" style="margin:12px 0 0;color:var(--ink-2);font-size:14px;min-height:20px"></p><p id="job-notes" style="margin:0;color:var(--ink-2);font-size:13px"></p><p class="note">Only the job number and the project name are kept. J${JOB_MIN_YEAR} and later.</p>
     <div class="acts"><button class="cancel" data-x="c">Cancel</button><button class="save" data-x="use" hidden>Use this list</button></div>`);
   const prev=dlg.querySelector('#job-prev'), use=dlg.querySelector('[data-x=use]');
-  const show=(rows, source, modified)=>{ const r=jobsFromRows(rows); const n=r.items.length;
+  const notesEl=dlg.querySelector('#job-notes'); const short=x=>{ x=String(x||''); return x.length>44?x.slice(0,43)+'…':x; };
+  const show=(rows, source, modified)=>{ const r=jobsFromRows(rows); const n=r.items.length; const notes=[];
+    if(rows&&rows.noHeader) notes.push('No table in this file has the “Job No” heading in its first row, so every table was read.');
+    if(rows&&rows.skipped) notes.push(rows.skipped===1?'1 other table has job numbers but no “Job No” heading in its first row. It was not read.':rows.skipped+' other tables have job numbers but no “Job No” heading in their first row. They were not read.');
+    if(r.dups.length) notes.push('Check these: '+r.dups.slice(0,6).map(d=>d.kept===d.other?`${d.no} appears twice with the same name`:`${d.no} appears twice: “${short(d.kept)}” is kept, “${short(d.other)}” is left out`).join('; ')+(r.dups.length>6?`; and ${r.dups.length-6} more`:'')+'.');
+    if(r.odd.length) notes.push(`${r.odd.length} number${r.odd.length!==1?'s look':' looks'} wrong for the year: ${r.odd.slice(0,6).join(', ')}${r.odd.length>6?' and '+(r.odd.length-6)+' more':''}. ${r.odd.length!==1?'They are':'It is'} still included.`);
+    notesEl.innerHTML=notes.map(x=>`<span style="display:block;margin-top:6px">${esc(x)}</span>`).join('');
     if(!n){ pending=null; use.hidden=true; prev.textContent='0 jobs found'+(r.bad?' · '+r.bad+' row'+(r.bad!==1?'s':'')+' not understood':'')+(r.old?' · '+r.old+' older than J'+JOB_MIN_YEAR+' left out':'')+'. Nothing changes.'; return; }
     pending={ items:r.items, source, modified:modified||null }; use.hidden=false;
-    prev.textContent=`${n} job${n!==1?'s':''} from ${r.items[n-1].no} to ${r.items[0].no} · ${r.bad} row${r.bad!==1?'s':''} not understood`+(r.dup?` · ${r.dup} number${r.dup!==1?'s':''} repeated, last one kept`:''); };
-  const ta=dlg.querySelector('#job-paste'); ta.addEventListener('input',()=>{ if(!ta.value.trim()){ pending=null; use.hidden=true; prev.textContent=''; return; } show(rowsFromPaste(ta.value), 'a pasted list', null); });
+    prev.textContent=`${n} job${n!==1?'s':''} from ${r.items[n-1].no} to ${r.items[0].no} · ${r.bad} row${r.bad!==1?'s':''} not understood`+(r.dup?` · ${r.dup} number${r.dup!==1?'s':''} repeated, first one kept`:''); };
+  const ta=dlg.querySelector('#job-paste'); ta.addEventListener('input',()=>{ if(!ta.value.trim()){ pending=null; use.hidden=true; prev.textContent=''; notesEl.innerHTML=''; return; } show(rowsFromPaste(ta.value), 'a pasted list', null); });
   const fi=dlg.querySelector('#job-file'); fi.addEventListener('change', async ()=>{ const f=fi.files&&fi.files[0]; if(!f) return; prev.textContent='Reading '+f.name+'…';
-    try{ show(await rowsFromDocx(f), f.name, f.lastModified?new Date(f.lastModified).toISOString():null); }catch(e){ pending=null; use.hidden=true; prev.textContent=String(e&&e.message||'The file could not be read.')+' Nothing changes.'; } fi.value=''; });
+    try{ show(await rowsFromDocx(f), f.name, f.lastModified?new Date(f.lastModified).toISOString():null); }catch(e){ pending=null; use.hidden=true; notesEl.innerHTML=''; prev.textContent=String(e&&e.message||'The file could not be read.')+' Nothing changes.'; } fi.value=''; });
   dlg.querySelector('.dlg').addEventListener('click', e=>{ const x=e.target.closest('[data-x]')?.dataset.x; if(!x) return;
     if(x==='file'){ fi.click(); return; }
     if(x==='c'){ closeDialog(); if(returnId){ const c=ctxOf(returnId); if(c) openEdit(c); } return; }
-    if(x==='use' && pending){ const before=JSON.stringify(DB.jobList||null); const n=pending.items.length; DB.jobList={ source:pending.source, modified:pending.modified, refreshedAt:Date.now(), items:pending.items }; saveDB(); closeDialog(); render();
-      flashUndo(`Job list updated · ${n} job${n!==1?'s':''}`, ()=>{ const b=JSON.parse(before); if(b) DB.jobList=b; else delete DB.jobList; saveDB(); render(); }, {label:'refresh job numbers'});
+    if(x==='use' && pending){ const before=JSON.stringify(DB.jobList||null); const n=pending.items.length; DB.jobList={ source:pending.source, modified:pending.modified, refreshedAt:Date.now(), items:pending.items }; mineList(); saveDB(); closeDialog(); render();
+      flashUndo(`Job list updated · ${n} job${n!==1?'s':''}`, ()=>{ const b=JSON.parse(before); if(b) DB.jobList=b; else delete DB.jobList; mineList(); saveDB(); render(); }, {label:'refresh job numbers'});
       if(returnId){ const c=ctxOf(returnId); if(c) openEdit(c); } } });
 }
 function jobsCardHTML(){ const n=jobItems().length; return `<div class="card" id="sec-jobs"><div class="eyebrow">Job numbers<span class="ln"></span></div><div class="note" id="jobline">${esc(jobListLine())}${n?' · '+n+' job'+(n!==1?'s':''):''}</div><div style="margin-top:8px"><button class="hb" data-act="jobrefresh" style="min-height:44px">Refresh job numbers…</button></div><p class="note" style="margin:8px 0 0">Pick a job for a task in the task’s own sheet, under Project.</p></div>`; }
@@ -4906,7 +4963,7 @@ setInterval(checkReminders, 60000);
 
 /* 2.7: test/diagnostic handle. Read-mostly; nothing here runs on its own. */
 window.__p27 = { get DB(){ return DB; }, buildImport, toCanonical, fromCanonical, storeCounts, parseWhen, applyImport, undoImport, earlierCopies, p27Usage, replayOnto, saveDB, exportShape, putBack, findTaskById, allIdSet, ruleId, odWrite, odDelete, odNameOk, readLiveStoreReadOnly, persistState, odState, syncLabel };
-Object.assign(window.__p27, { jobsFromRows, rowsFromPaste, rowsFromDocx, normJobNo, applyLook, setLook, openLookSheet, gymToggle, photoState, photoSetMode, photoChosen, exportObj, countTasksIn, datedCount, ui, addFromText, parseAddLine, computeFit, planFor, fitDay, parseRange, timeTasks, runUndo, boardCols, openSortOne, render });
+Object.assign(window.__p27, { jobsFromRows, rowsFromPaste, rowsFromDocx, normJobNo, isJobHeader, jobLike, jobOptions, applyLook, setLook, openLookSheet, gymToggle, photoState, photoSetMode, photoChosen, exportObj, countTasksIn, datedCount, ui, addFromText, parseAddLine, computeFit, planFor, fitDay, parseRange, timeTasks, runUndo, boardCols, openSortOne, render });
 // Register the service worker (offline-first). Harmless if unsupported.
 /* 2.7 (review item 7): the live planner's service worker deletes every cache not named planner-v1 when it
    activates, so this copy's shell cache can vanish. On each online open, re-add it if it is missing. */
