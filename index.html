@@ -180,15 +180,13 @@ body[data-w="wide"] .cards,body[data-w="laptop"] .cards{grid-template-columns:mi
 .pill.remind.over{color:var(--late-ink);background:var(--late-wash);border-color:#e0bb92}
 .pill.tag{font-weight:600}
 .rbell{flex:0 0 auto;width:16px;height:16px;stroke:var(--gold-ink);stroke-width:2;fill:none;stroke-linecap:round;stroke-linejoin:round}
-.mvbtn{flex:0 0 auto;width:28px;height:28px;border-radius:8px;display:grid;place-items:center;color:var(--muted)}
+.mvbtn{flex:0 0 auto;width:36px;height:36px;border-radius:8px;display:grid;place-items:center;color:var(--muted)}
 .mvbtn svg{width:16px;height:16px;stroke:currentColor;stroke-width:2;fill:none;stroke-linecap:round;stroke-linejoin:round}
 .mvbtn:hover{background:var(--paper-2);color:var(--ink)}
 .grip{display:none;flex:0 0 auto;width:12px;margin-left:-6px;color:var(--edge);text-align:center;cursor:grab;touch-action:none;font-size:12px;line-height:1;user-select:none}
 @media (hover:hover) and (pointer:fine){
-  .t .mvbtn{position:absolute;right:3px;top:50%;margin-top:-14px;opacity:0;pointer-events:none;background:var(--paper);box-shadow:-6px 0 6px var(--paper)}
-  .t .pill.subs + .mvbtn{right:46px}
-  .t:hover .mvbtn,.t:focus-within .mvbtn,.t .mvbtn:focus-visible{opacity:1;pointer-events:auto}
-  .t:hover .mvbtn{background:#fff;box-shadow:-6px 0 6px #fff}
+  .t .mvbtn{opacity:.45}
+  .t:hover .mvbtn,.t .mvbtn:focus-visible{opacity:1}
   .t:hover{background:#fff;box-shadow:var(--shadow-2)}
   .t.done:hover{background:var(--paper-2);box-shadow:none}
   body[data-lay="lap"] .bcol .grip{display:block;opacity:0}
@@ -310,7 +308,7 @@ body[data-lay="phone"] .board.snap .bcol.today{background:var(--col-today);borde
 /* phone chip strip, directly above the Add field */
 #chipbar{display:none}
 body[data-lay="phone"].v-weekplus:not(.snapview) #chipbar{display:flex;position:fixed;left:0;right:0;bottom:calc(var(--tabh) + var(--addh) + var(--sab));z-index:41;gap:3px;padding:6px 8px 0;background:var(--bg);border-top:1px solid var(--hair)}
-.chip{flex:1 1 0;min-width:0;height:56px;border-radius:12px;background:var(--paper);border:1px solid var(--hair);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;padding:0}
+.chip{flex:1 0 44px;min-width:44px;height:56px;border-radius:12px;background:var(--paper);border:1px solid var(--hair);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;padding:0}
 .chip .d{font-size:12px;font-weight:700;color:var(--muted);line-height:14px}
 .chip .n{font-size:15px;font-weight:740;line-height:18px}
 .chip.word .d{font-size:13px;color:var(--ink-2)}
@@ -555,6 +553,14 @@ body[data-lay="phone"] .chev{width:44px;height:44px}
 .t .lab:has(> .subdesc){display:block;padding:6px 0;cursor:default}
 .tile-b{font-size:13px;text-align:center;line-height:1.2}
 .fromlab{font-size:12px;font-weight:650;color:var(--muted);padding:6px 4px 0}
+
+/* fix pass: F6 the week chips never go under 44 px; on a narrow phone the strip scrolls sideways inside itself */
+body[data-lay="phone"].v-weekplus:not(.snapview) #chipbar{overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:none}
+#chipbar::-webkit-scrollbar{display:none}
+.conn,.conn-h > div{min-width:0} .conn-t,.conn-d,.softbtn .h,.softbtn .s,.note{overflow-wrap:anywhere}
+.conn-row2{flex-wrap:wrap} .conn-row2 .conn-btn{flex:1 1 120px;width:auto}
+.eyebrow{flex-wrap:wrap;row-gap:6px}
+.eyebrow .ln{min-width:16px}
 </style>
 </head>
 <body>
@@ -661,7 +667,9 @@ function reseedUID(db){
   UID=Math.max(UID, mx+1);
 }
 function loadDB(){
-  try{ const raw=localStorage.getItem(STORE_KEY); if(raw){ const o=JSON.parse(raw); UID=(o._uid||1000); migrate(o); reseedUID(o); _memBaseText=raw; return o; } }catch(e){}
+  let raw=null; try{ raw=localStorage.getItem(STORE_KEY); }catch(e){}
+  if(raw){ try{ const o=JSON.parse(raw); if(!o||typeof o!=='object'||Array.isArray(o)||Array.isArray(o.weeks)) throw new Error('not a planner store'); UID=(o._uid||1000); migrate(o); reseedUID(o); _memBaseText=raw; return o; }
+    catch(e){ _corrupt={ raw, at:Date.now(), why:String(e&&e.message||e) }; keepCorruptCopy(raw); } }   /* 2.7 fix F2 */
   return buildSeed();
 }
 /* 2.7 (3.6) MULTI-TAB. _memBaseText = the exact store text this tab last loaded or wrote. If the stored text
@@ -680,7 +688,7 @@ function replayOnto(B, L, S){
   const insertR=(x)=>{ if(!R.weeks[x.w]) R.weeks[x.w]=skelWeek(x.w); const arr=colArr(R.weeks[x.w],x.di,x.k); arr.splice(Math.min(x.j,arr.length),0,JSON.parse(JSON.stringify(x.t))); };
   let changed=0;
   iL.forEach((x,id)=>{ const b=iB.get(id);
-    if(!b){ if(!iR.has(id)){ insertR(x); changed++; } return; }                                   // added here
+    if(!b){ if(!iR.has(id) && !((R.bin&&R.bin[id]) && !(B.bin&&B.bin[id]))){ insertR(x); changed++; } return; }                                   // added here
     const same = b.w===x.w && b.di===x.di && b.k===x.k && JSON.stringify(b.t)===JSON.stringify(x.t);
     if(!same){ removeFromR(id); insertR(x); changed++; } });                                      // edited or moved here
   iB.forEach((b,id)=>{ if(!iL.has(id)){ removeFromR(id); changed++; } });                         // removed here (binned or merged away)
@@ -692,9 +700,9 @@ function replayOnto(B, L, S){
 function reconcileWithStored(){
   let st=null; try{ st=localStorage.getItem(STORE_KEY); }catch(e){ return false; }
   if(st==null || _memBaseText==null || st===_memBaseText) return false;
-  let S, B; try{ S=JSON.parse(st); B=JSON.parse(_memBaseText); migrate(B); }catch(e){ return false; }   /* base migrated like memory, so load-time fills are not mistaken for edits */
+  let S, B; try{ S=JSON.parse(st); B=JSON.parse(mergeBaseText()); migrate(B); }catch(e){ return false; }   /* base migrated like memory, so load-time fills are not mistaken for edits */
   const { R, changed }=replayOnto(B, DB, S);
-  migrate(R); reseedUID(R); DB=R; _memBaseText=st;
+  migrate(R); reseedUID(R); DB=R; _memBaseText=st; _pinBase=null;
   try{ odLog('tab-merge', { rev:S.rev, changed }); }catch(e){}
   return true;
 }
@@ -702,7 +710,8 @@ let _storeStale=false;
 function onStoreChangedElsewhere(){
   let st=null; try{ st=localStorage.getItem(STORE_KEY); }catch(e){ return; }
   if(st==null || st===_memBaseText) return;
-  if(dragging || (dlg && dlg.open)){ _storeStale=true; return; }       // mid-edit: saveDB will merge
+  if(dragging || (dlg && dlg.open)){ _storeStale=true; pinRecentBase(); return; }
+  if(healFromRecent(st)) return;       // mid-edit: saveDB will merge
   try{ const o=JSON.parse(st); migrate(o); reseedUID(o); DB=o; _memBaseText=st; _storeStale=false; ui.claudeReads={}; render(); }catch(e){}
 }
 function onMetaChangedElsewhere(){ try{ const meta=JSON.parse(localStorage.getItem(OD.metaKey)||'null'); if(meta){ odState.live=!!meta.live; odState.etag=meta.etag||null; odState.baseRev=(Number.isInteger(meta.baseRev)?meta.baseRev:null); } }catch(e){} }
@@ -734,12 +743,17 @@ function migrate(db){
   };
   /* repair week shape before anything reads it — legacy/partial weeks (no days, no future)
      used to crash allReminders()/countAllTasks() and blank the whole app */
+  if(!db.weeks || typeof db.weeks!=='object') db.weeks={};
+  /* 2.7 fix F1: a week stored as a bare array of days (the June shape, entries may be null) becomes the object shape. Nothing dropped, ids untouched. */
+  Object.keys(db.weeks).forEach(iso=>{ const wk=db.weeks[iso]; if(!Array.isArray(wk)) return; const full=emptyWeekDays(iso); const o={ key:iso, days:full, future:{personal:[],work:[]}, weekend:{personal:[],work:[]} };
+    wk.forEach((d,i)=>{ if(!d||typeof d!=='object') return; if(i<7){ Object.keys(d).forEach(k=>{ if(k==='personal'||k==='work'){ if(Array.isArray(d[k])) full[i][k]=d[k]; } else full[i][k]=d[k]; }); } else ['personal','work'].forEach(k=>{ if(Array.isArray(d[k])) d[k].forEach(t=>o.future[k].push(t)); }); });
+    db.weeks[iso]=o; });
   Object.entries(db.weeks||{}).forEach(([iso,wk])=>{
     if(!wk || typeof wk!=='object') return;
     if(!wk.key) wk.key=iso;
     if(!Array.isArray(wk.monday)){ const [y,m,d]=iso.split('-').map(Number); if(y&&m&&d) wk.monday=[y,m-1,d]; }
     if(!Array.isArray(wk.days)) wk.days=emptyWeekDays(iso);
-    if(wk.days.length!==7){ const full=emptyWeekDays(iso); for(let i=0;i<7;i++){ if(!wk.days[i]||typeof wk.days[i]!=='object') wk.days[i]=full[i]; } wk.days.length=7; }
+    { const full=emptyWeekDays(iso); for(let i=0;i<7;i++){ if(!wk.days[i]||typeof wk.days[i]!=='object') wk.days[i]=full[i]; } wk.days.length=7; }
     { const full=emptyWeekDays(iso); wk.days.forEach((d,i)=>{ ['dow','n','month'].forEach(k=>{ if(d[k]===undefined) d[k]=full[i][k]; }); if(!Array.isArray(d.appts)) d.appts=[]; }); }
     wk.days.forEach(d=>['personal','work'].forEach(k=>{ if(!Array.isArray(d[k])) d[k]=[]; d[k].forEach(fix); }));
     if(!wk.future || typeof wk.future!=='object') wk.future={personal:[],work:[]};
@@ -756,6 +770,7 @@ function migrate(db){
    main write retried, so a snapshot can never be the reason the store did not save. */
 const persistState = { error:null, lastOk:0 };
 function writeStore(text){
+  if(_corrupt){ persistState.error='Not saved on this device'; try{ updateSyncBadge(); }catch(e0){} return false; }   /* 2.7 fix F2: never write over an unreadable store before he has chosen */
   try{ localStorage.setItem(STORE_KEY, text); persistState.error=null; persistState.lastOk=Date.now(); _memBaseText=text; try{ _bc&&_bc.postMessage({rev:DB&&DB.rev}); }catch(e4){} return true; }
   catch(e){
     try{ if(localStorage.getItem('p27:snap:day')!=null){ localStorage.removeItem('p27:snap:day'); localStorage.setItem(STORE_KEY, text); persistState.error=null; persistState.lastOk=Date.now(); _memBaseText=text; return true; } }catch(e2){}
@@ -764,7 +779,7 @@ function writeStore(text){
     return false;
   }
 }
-function saveDB(){ try{ reconcileWithStored(); }catch(e){ console.error(e); } try{ pruneBin(); }catch(e){} DB.savedAt=Date.now(); DB.rev=(Number.isInteger(DB.rev)?DB.rev:0)+1; DB._uid=UID; writeStore(JSON.stringify(DB)); flashSaved(); scheduleSync(); }   // v2.1: rev bumps on every REAL (user-action) save
+function saveDB(){ try{ reconcileWithStored(); }catch(e){ console.error(e); } try{ pruneBin(); }catch(e){} DB.savedAt=Date.now(); DB.rev=(Number.isInteger(DB.rev)?DB.rev:0)+1; DB._uid=UID; { const _pb=_memBaseText; if(writeStore(JSON.stringify(DB))) noteBase(_pb); } flashSaved(); scheduleSync(); }   // v2.1: rev bumps on every REAL (user-action) save
 
 /* v1.2 (E3): the date is recomputed, not frozen at load. A tab left open past
    midnight used to keep treating yesterday as today — wrong day highlighted, gym
@@ -1125,7 +1140,7 @@ async function getToken(cfg, stateObj){
   }
   return tok.access;
 }
-async function gText(path){ const t=await getToken(OD, odState); const r=await fetch(OD.graph+path,{headers:{Authorization:'Bearer '+t}}); if(r.status===404) return null; if(!r.ok) throw new Error('read '+r.status); return r.text(); }
+async function gText(path){ const t=await getToken(OD, odState); const r=await gfetch(OD.graph+path,{headers:{Authorization:'Bearer '+t}}); if(r.status===404) return null; if(!r.ok) throw new Error('read '+r.status); return r.text(); }
 /* 2.7: THE only OneDrive write. Throws (synchronously, before any token or network use) unless
    the file is this copy's own: planner27* or backups27/*. The live planner-v2 file and its
    backups/ folder can never be written from here. cond: {ifMatch:etag} or {ifNoneMatch:true}. */
@@ -1137,7 +1152,7 @@ function odWrite(name, text, cond){
     const headers={Authorization:'Bearer '+t,'Content-Type':'application/json'};
     if(cond && cond.ifMatch) headers['If-Match']=cond.ifMatch;
     else if(cond && cond.ifNoneMatch) headers['If-None-Match']='*';
-    const r=await fetch(OD.graph+APPROOT+'/'+name+':/content',{ method:'PUT', headers, body:text });
+    const r=await gfetch(OD.graph+APPROOT+'/'+name+':/content',{ method:'PUT', headers, body:text });
     if(r.status===412) return { conflict:true };
     if(!r.ok) throw new Error('write '+r.status);
     return r.json();
@@ -1145,7 +1160,7 @@ function odWrite(name, text, cond){
 }
 function odDelete(name){
   if(!/^backups27\/[\w.-]+\.json$/.test(name||'')) throw new Error('2.7 guard: refusing to delete OneDrive file '+name);
-  return (async()=>{ const t=await getToken(OD, odState); const r=await fetch(OD.graph+APPROOT+'/'+name,{ method:'DELETE', headers:{Authorization:'Bearer '+t} }); if(!r.ok && r.status!==404) throw new Error('delete '+r.status); return true; })();
+  return (async()=>{ const t=await getToken(OD, odState); const r=await gfetch(OD.graph+APPROOT+'/'+name,{ method:'DELETE', headers:{Authorization:'Bearer '+t} }); if(!r.ok && r.status!==404) throw new Error('delete '+r.status); return true; })();
 }
 // merge cloud + local health rather than clobbering: a cloud copy that's newer on TASKS can still
 // carry staler HEALTH — union the day maps, newer health.updatedAt side wins conflicting days
@@ -1187,7 +1202,7 @@ async function gPutIfMatch(name, text, etag){
 async function odItemMeta(ifNoneMatch){
   const t=await getToken(OD, odState);
   const h={Authorization:'Bearer '+t}; if(ifNoneMatch) h['If-None-Match']=ifNoneMatch;
-  const r=await fetch(OD.graph+APPROOT+'/'+OD.file,{headers:h, cache:'no-store'});
+  const r=await gfetch(OD.graph+APPROOT+'/'+OD.file,{headers:h, cache:'no-store'});
   if(r.status===304) return { eTag:ifNoneMatch, notModified:true };
   if(r.status===404) return null;
   if(!r.ok) throw new Error('meta '+r.status);
@@ -1198,7 +1213,7 @@ const APPROOT='/me/drive/special/approot:';
 /* ---- counts (works for BOTH old v2 and new schema) — used to assert zero-loss ---- */
 function countTasksIn(db){
   let tasks=0, subs=0; const walk=arr=>{ (arr||[]).forEach(t=>{ tasks++; subs+=(t.subs||[]).length; }); };
-  Object.values((db&&db.weeks)||{}).forEach(wk=>{ (wk.days||[]).forEach(d=>{ walk(d.personal); walk(d.work); }); if(wk.future){ walk(wk.future.personal); walk(wk.future.work); } if(wk.weekend){ walk(wk.weekend.personal); walk(wk.weekend.work); } });
+  Object.values((db&&db.weeks)||{}).forEach(wk=>{ if(!wk) return; if(Array.isArray(wk)){ wk.forEach(d=>{ if(d){ walk(d.personal); walk(d.work); } }); return; } (wk.days||[]).forEach(d=>{ if(!d) return; walk(d.personal); walk(d.work); }); if(wk.future){ walk(wk.future.personal); walk(wk.future.work); } if(wk.weekend){ walk(wk.weekend.personal); walk(wk.weekend.work); } });
   if(Array.isArray(db&&db.days)){ db.days.forEach(d=>{ walk(d.personal); walk(d.work); }); }   // v2 top-level active week
   if(db&&db.future){ walk(db.future.personal); walk(db.future.work); }
   return { tasks, subs };
@@ -1244,7 +1259,7 @@ function diffPlanner(local, remote){
 function deviceId(){ let d=null; try{ d=localStorage.getItem('p27:od:deviceid'); }catch(e){} if(!d){ d='d'+Math.random().toString(36).slice(2,10); try{ localStorage.setItem('p27:od:deviceid', d); }catch(e){} } return d; }
 
 // tasks sitting on an actual weekday (not the pool/weekend) — a "revert to pool" shows here
-function datedCount(db){ let n=0; for(const wk of Object.values((db&&db.weeks)||{})){ if(!wk||!Array.isArray(wk.days)) continue; wk.days.forEach(d=>['personal','work'].forEach(k=>{ if(Array.isArray(d[k])) n+=d[k].length; })); } return n; }
+function datedCount(db){ let n=0; for(const wk of Object.values((db&&db.weeks)||{})){ const dd=Array.isArray(wk)?wk:(wk&&wk.days); if(!Array.isArray(dd)) continue; dd.forEach(d=>{ if(d) ['personal','work'].forEach(k=>{ if(Array.isArray(d[k])) n+=d[k].length; }); }); } return n; }
 
 // ring log — last 60 push/pull events, localStorage only, surfaced in More
 function odLog(dir, info){ try{ const L=JSON.parse(localStorage.getItem('p27:od:log')||'[]'); L.push(Object.assign({t:Date.now(), dir, dev:deviceId()}, info||{})); while(L.length>60) L.shift(); localStorage.setItem('p27:od:log', JSON.stringify(L)); }catch(e){} }
@@ -1327,7 +1342,7 @@ async function odMaybeBackup(force){
 }
 async function odPruneBackups(){
   const t=await getToken(OD, odState);
-  const r=await fetch(OD.graph+APPROOT+'/backups27:/children?$select=name&$top=500',{headers:{Authorization:'Bearer '+t}});
+  const r=await gfetch(OD.graph+APPROOT+'/backups27:/children?$select=name&$top=500',{headers:{Authorization:'Bearer '+t}});
   if(!r.ok) return;
   const j=await r.json(); const names=(j.value||[]).map(x=>x.name).filter(n=>/^planner27-[\w.-]+\.json$/.test(n)).sort();
   const drop=names.slice(0, Math.max(0, names.length-30));
@@ -1388,8 +1403,9 @@ async function _odPush(){
     odState.lastSync=Date.now(); odState.error=null; _syncRetryN=0;
     if(DB.rev===pushedRev){ _pushPending=false; } else { _pushPending=true; clearTimeout(_syncT); _syncT=setTimeout(odPush, 400); }
   }catch(e){
-    odState.error='Cloud save failed — kept safe locally. '+e.message;
-    if(_syncRetryN<3){ _syncRetryN++; clearTimeout(_syncRetryT); _syncRetryT=setTimeout(()=>{ if(odState.connected&&odState.live) odPush(); }, 20000*_syncRetryN); }
+    const _a=/\b401\b/.test(String(e&&e.message))?await odOn401():null;
+    if(_a==='signedout') odState.error=null; else odState.error='Cloud save failed — kept safe locally. '+e.message;
+    if(_a!=='signedout' && _syncRetryN<3){ _syncRetryN++; clearTimeout(_syncRetryT); _syncRetryT=setTimeout(()=>{ if(odState.connected&&odState.live) odPush(); }, 20000*_syncRetryN); }
   }
   odState.syncing=false; updateSyncBadge();
 }
@@ -1451,7 +1467,7 @@ async function _odPullCheck(reason){
     }
     odState.etag=meta.eTag||odState.etag; odPersistMeta();                                   // we are current/ahead — note etag so our pushes can If-Match
     odState.pulling=false; updateSyncBadge(); return;
-  }catch(e){ /* offline or auth hiccup — stay quiet, badge reflects connection state (2.7: expired now shows) */ }
+  }catch(e){ if(/\b401\b/.test(String(e&&e.message))){ try{ await odOn401(); }catch(e2){} } }
   odState.pulling=false; updateSyncBadge();
 }
 /* 2.7 (R8): while the page is visible, check the cloud every 30 s (one If-None-Match metadata GET; 304 when
@@ -1942,7 +1958,7 @@ const dlg=document.getElementById('dlg');
 let _dlgGen=0;
 function dlgIs(g){ return !!(dlg && dlg.open && _dlgGen===g); }
 let _dlgOpenAt=0;
-function openDialog(html, cls){ try{ sheetClosing(); }catch(e){} _dlgGen++; if(dlg.open){ try{ dlg.close(); }catch(e){} } dlg.onclick=null; dlg.onkeydown=null; dlg.className=cls||''; dlg.innerHTML=`<div class="dlg">${html}</div>`; dlg.showModal(); _dlgOpenAt=Date.now(); const h=dlg.querySelector('h3'); if(h){ h.id='dlg-title'; dlg.setAttribute('aria-labelledby','dlg-title'); } else dlg.setAttribute('aria-label','Sort one at a time'); if(!cls){ const f=dlg.querySelector('input:not([type=date]):not([type=datetime-local]),textarea'); if(f){ setTimeout(()=>{ f.focus(); if(f.select) f.select(); },30); } } }
+function openDialog(html, cls){ if(_corrupt && String(html).indexOf('corruptline')<0) return; try{ sheetClosing(); }catch(e){} _dlgGen++; if(dlg.open){ try{ dlg.close(); }catch(e){} } dlg.onclick=null; dlg.onkeydown=null; dlg.className=cls||''; dlg.innerHTML=`<div class="dlg">${html}</div>`; dlg.showModal(); _dlgOpenAt=Date.now(); const h=dlg.querySelector('h3'); if(h){ h.id='dlg-title'; dlg.setAttribute('aria-labelledby','dlg-title'); } else dlg.setAttribute('aria-label','Sort one at a time'); if(!cls){ const f=dlg.querySelector('input:not([type=date]):not([type=datetime-local]),textarea'); if(f){ setTimeout(()=>{ f.focus(); if(f.select) f.select(); },30); } } }
 function closeDialog(){ try{ sheetClosing(); }catch(e){} _dlgGen++; if(dlg.open) dlg.close(); if(_healthRenderDeferred) renderDeferred(); }   /* v2.3: flush a health redraw parked behind the dialog */
 // themed yes/no — replaces native confirm() so every confirmation looks like the app
 function openConfirm(h, p, yesLabel, onYes){
@@ -1950,7 +1966,7 @@ function openConfirm(h, p, yesLabel, onYes){
   dlg.querySelector('[data-x=no]').addEventListener('click',closeDialog);
   dlg.querySelector('[data-x=yes]').addEventListener('click',()=>{ closeDialog(); onYes(); });
 }
-dlg.addEventListener('click', e=>{ if(e.target===dlg && Date.now()-_dlgOpenAt>450) dlg.close(); });
+dlg.addEventListener('click', e=>{ if(e.target===dlg && !_corrupt && Date.now()-_dlgOpenAt>450) dlg.close(); });
 
 function openAddTask(wKey,di,kind){
   const wk=DB.weeks[wKey]; const where = di==='F'?'Unscheduled':(di==='W'?'Weekend':`${DOWFULL[di]||''}`);
@@ -2877,7 +2893,7 @@ function claudeCardInner(){
   const be=claudeBackend();
   return `<div class="conn"><div class="conn-h"><div><div class="conn-t">Claude · intelligence</div><div class="conn-d">Break into steps · adjust a day plan · read health trends · sort the inbox · plan project steps. Suggestions only; you approve every change</div></div><span class="conn-badge" style="color:${be?'var(--good)':'var(--gold)'}">${be==='lab'?'Active · here':be==='worker'?'Active · worker':'Needs worker'}</span></div>
   ${be==='worker'?'<div class="conn-d" style="margin-top:8px">Runs through your own Cloudflare worker. Your API key lives only in that worker\'s secret — never in this page, this device or your planner file. Claude sees whatever you ask about — your week summary, a stuck task, a project, or the thoughts in your inbox — plus a short note about how you work and what your life looks like, so the tone fits. Nothing else leaves the planner, and nothing is stored there.</div>':''}
-  ${be?'' :'<div class="conn-d" style="margin-top:8px">On the live site this talks to Claude through a tiny Cloudflare worker (same pattern as the Fitbit proxy) that holds your API key — one file, ~20 lines. In this design lab it works out of the box.</div>'}</div>`;
+  ${be?'' :'<div class="conn-d" style="margin-top:8px">On the live site this talks to Claude through a tiny Cloudflare worker that holds your API key — one file, ~20 lines. In this design lab it works out of the box.</div>'}</div>`;
 }
 /* ----- HEALTH: Fitbit / Google Health behind ONE adapter; gap-tolerant ----- */
 const SLEEP_TARGET=480, STEP_GOAL=10000;
@@ -3310,13 +3326,13 @@ function ghCardInner(){
   }
   if(!ghHasGrant()){
     return `<div class="conn">
-      <div class="conn-h"><div><div class="conn-t">Google Health · sleep, steps & richer metrics</div><div class="conn-d">Read-only · sign in as <b>tomhunter848@gmail.com</b> — the Google account your Fitbit lives in</div></div><span class="conn-badge">${(ghState.connErr||ghState.permission||ghState.needsTap)?'Retry':'Not connected'}</span></div>
+      <div class="conn-h"><div><div class="conn-t">Google Health · sleep, steps & richer metrics</div><div class="conn-d">Read-only · sign in as <b>tomhunter848@gmail.com</b> — the Google account your health readings are in</div></div><span class="conn-badge">${(ghState.connErr||ghState.permission||ghState.needsTap)?'Retry':'Not connected'}</span></div>
       <button class="conn-btn" data-gh="connect">Connect Google Health</button>
       ${ghState.permission?`<div class="conn-warn">${esc(ghState.permission)} <button class="linkbtn" data-gh="consent">Fix permissions</button></div>`:''}
       ${(!ghState.permission&&ghState.needsTap)?`<div class="conn-warn">Google Health signed out — one tap reconnects it; no password. <button class="linkbtn" data-gh="connect">Reconnect</button></div>`:''}
       ${ghState.connErr?`<div class="conn-warn">${esc(ghState.connErr)} <button class="linkbtn" data-gh="connect">Try again</button></div>`:''}
       ${!DEPLOY_OK?`<div class="conn-d" style="margin-top:8px">Runs on the live site (not in this preview).</div>`:''}
-      <div class="conn-d" style="margin-top:8px">Runs beside Fitbit until its API retires in September. After an hour away, Google asks for one tap to resume — no password, takes a second.</div>
+      <div class="conn-d" style="margin-top:8px">Google Health is the only source of new readings. After an hour away, Google asks for one tap to resume — no password, takes a second.</div>
     </div>`;
   }
   const held=ghDataPresent()?Object.keys(DB.health.gh.days).length:0;
@@ -3405,7 +3421,7 @@ function renderHealth(){
       ${R.ready
         ? `<div style="font-size:22px;font-weight:760;color:${bandCol}">${R.band}</div><div style="font-size:12px;color:var(--ink-2);margin-top:4px">${R.lines.map(esc).join('<br>')}</div>`
         : `<div style="font-size:13px;color:var(--muted)">Building baseline — ${R.have} of ${R.need} tracked days minimum.</div>`}
-      <div class="conn-d" style="margin-top:6px">Computed by this planner from your own raw data — not a Google or Fitbit score, not a medical reading.${R.ready?' The three lines above are the whole formula.':''}</div>`;
+      <div class="conn-d" style="margin-top:6px">Computed by this planner from your own raw data — not a Google score, not a medical reading.${R.ready?' The three lines above are the whole formula.':''}</div>`;
     let rows='';
     for(let i=0;i<14;i++){
       const iso=addDays(todayISO,-i); const r=ghDay(iso)||{};
@@ -3917,7 +3933,7 @@ function boardCols(){
   } else for(let i=0;i<=4;i++) cols.push(dcol(i));
   cols.push({id:'wkd', cls:'wkd'+(wkdToday?' today':''), dw:'Weekend', nn:'', count:openCount(wk,'W')+openCount(wk,5)+openCount(wk,6), chip:'W', today:wkdToday,
     secs:[{w:wk,di:'W',title:'Either day'}, Object.assign(dsec(5),{title:'Sat '+wk.days[5].n}), Object.assign(dsec(6),{title:'Sun '+wk.days[6].n})]});
-  cols.push({id:'nxt', cls:'nxt', dw:'Next week', nn:'w/c '+dmon(nxKey), secs:[{w:nwk,di:'F'}], count:openCount(nwk,'F'), chip:'N'});
+  cols.push({id:'nxt', cls:'nxt', dw:'Next week', nn:'Unscheduled · w/c '+dmon(nxKey), secs:[{w:nwk,di:'F'}], count:openCount(nwk,'F'), chip:'N'});
   /* which columns are open */
   let open=new Set(['pool']);
   if(vp==='wide' && plan) cols.forEach(c=>open.add(c.id));
@@ -3980,6 +3996,7 @@ function renderWeekPlus(){
     const cb=document.getElementById('chipbar');
     if(cb) cb.innerHTML=snap?'':B.cols.filter(c=>c.chip!==undefined).map(c=>{ const word=typeof c.chip!=='number'; const lab=c.chip==='F'?'Uns':c.chip==='W'?'Wknd':c.chip==='N'?'Next':c.dw[0];
       return `<button class="chip ${word?'word':''} ${c.pool?'pool':''} ${c.today?'today':''} ${ui.chip===c.chip?'sel':''}" data-chip="${c.chip}" aria-pressed="${ui.chip===c.chip}" aria-label="${attr(c.dw+' '+c.nn)}"><span class="d">${lab}</span>${word?'':`<span class="n">${c.nn}</span>`}</button>`; }).join('');
+    if(cb && !snap){ const sc=cb.querySelector('.chip.sel'); if(sc){ const a=sc.offsetLeft, b=a+sc.offsetWidth; if(a<cb.scrollLeft) cb.scrollLeft=a-8; else if(b>cb.scrollLeft+cb.clientWidth) cb.scrollLeft=b-cb.clientWidth+8; } }
   }
 }
 /* two-row week (the old "Week"): Mon-Fri above; Weekend, Sat, Sun, Unscheduled, Next week below */
@@ -3989,7 +4006,7 @@ function renderWeek(){
   const dcol=i=>colHTML({id:'d'+i, cls:(isThis&&i===td)?'today':'', dw:DOW[i], nn:String(wk.days[i].n), today:isThis&&i===td, open:true, secs:[{w:wk,di:i,iso:addDays(ui.weekKey,i),today:isThis&&i===td}]},showAll);
   const one=(id,cls,dw,nn,w,di)=>colHTML({id, cls, dw, nn, open:true, pool:id==='pool', secs:[{w,di}]},showAll);
   view.innerHTML=`<div class="weeklabel">Mon – Fri</div><div class="board2">${[0,1,2,3,4].map(dcol).join('')}</div>
-    <div class="weeklabel">Weekend · Unscheduled · Next week</div><div class="board2">${one('wkd','wkd','Weekend','either day',wk,'W')}${dcol(5)}${dcol(6)}${one('pool','pool','Unscheduled','',wk,'F')}${one('nxt','nxt','Next week','w/c '+dmon(nxKey),nwk,'F')}</div>`;
+    <div class="weeklabel">Weekend · Unscheduled · Next week</div><div class="board2">${one('wkd','wkd','Weekend','either day',wk,'W')}${dcol(5)}${dcol(6)}${one('pool','pool','Unscheduled','',wk,'F')}${one('nxt','nxt','Next week','Unscheduled · w/c '+dmon(nxKey),nwk,'F')}</div>`;
 }
 function unfinishedCount(wk){ let n=0; wk.days.forEach(d=>{ d.personal.forEach(t=>{ if(!t.done) n++; }); d.work.forEach(t=>{ if(!t.done) n++; }); }); ['weekend','future'].forEach(z=>{ if(wk[z]) ['personal','work'].forEach(k=>wk[z][k].forEach(t=>{ if(!t.done) n++; })); }); return n; }
 function updateSelbar(){
@@ -4553,17 +4570,74 @@ function faceBoot(){
   ui.view=isLap()?'weekplus':'today';
   wireAddFields();
   try{ dlg.addEventListener('close', sheetClosing); }catch(e){}
-  recoverSheetDraft();
+  if(_corrupt) setTimeout(showCorruptNotice, 250); else recoverSheetDraft();
   setTimeout(focusAdd, 80);
 }
 /* ===== end of 2.7 FACE ===== */
+
+/* =====================================================================================================
+   2.7 FIX PASS (after the independent stress run). F1 array-shaped weeks, F2 unreadable store,
+   F3 two tabs saving at the same moment, F4 a 401 means signed out, F5 no request may hang for ever.
+   ===================================================================================================== */
+/* F2: the store could not be read. The raw text is kept (newest three), nothing is written over it until he chooses. */
+let _corrupt=null;
+function keepCorruptCopy(raw){
+  try{ const pre='p27:corrupt:'; let keys=[]; for(let i=0;i<localStorage.length;i++){ const k=localStorage.key(i); if(k&&k.startsWith(pre)) keys.push(k); }
+    if(!keys.some(k=>localStorage.getItem(k)===raw)){ const k=pre+Date.now(); try{ localStorage.setItem(k, raw); keys.push(k); }catch(e){ try{ localStorage.removeItem('p27:snap:day'); localStorage.setItem(k, raw); keys.push(k); }catch(e2){} } }
+    keys.sort((a,b)=>(+a.slice(pre.length)||0)-(+b.slice(pre.length)||0)); while(keys.length>3) localStorage.removeItem(keys.shift());
+  }catch(e){}
+}
+function readableCopy(text){ try{ const o=JSON.parse(text); return (o&&typeof o==='object'&&!Array.isArray(o)&&o.weeks&&typeof o.weeks==='object'&&!Array.isArray(o.weeks))?o:null; }catch(e){ return null; } }
+function showCorruptNotice(){
+  if(!_corrupt) return;
+  const newest=earlierAll().filter(e=>readableCopy(e.text)).sort((a,b)=>(+b.at||0)-(+a.at||0))[0]||null;
+  openDialog(`<h3 class="sr">Saved tasks</h3><p id="corruptline" style="font-size:15px;color:var(--ink)">Your saved tasks could not be read on this device. Nothing has been deleted.</p>
+    <p>The unreadable copy is kept on this device. Nothing new is saved until you choose one of these.</p>
+    <div class="menulist" id="corruptmenu">${newest?`<button data-c="earlier">Restore the newest Earlier copy<span class="sub2">${esc(fmtWhen(newest.at))}</span></button>`:''}${odState.connected?`<button data-c="cloud">Use OneDrive’s copy</button>`:''}<button data-c="empty">Start empty</button></div>`,'sheet');
+  dlg.querySelector('#corruptmenu').addEventListener('click', e=>{ const b=e.target.closest('[data-c]'); if(!b) return; const c=b.dataset.c;
+    if(c==='earlier'){ const o=readableCopy(newest.text); if(!o) return; UID=Math.max(UID, o._uid||1000); migrate(o); reseedUID(o); DB=o; _corrupt=null; persistState.error=null; ui.weekKey=null; saveDB(); closeDialog(); render(); flashToast('Restored the copy from '+fmtWhen(newest.at)); return; }
+    _corrupt=null; persistState.error=null; closeDialog(); updateSyncBadge();
+    if(c==='cloud'){ openReconcile(); } else flashToast('Starting empty. The unreadable copy is kept on this device.'); });
+}
+try{ dlg.addEventListener('cancel', e=>{ if(_corrupt) e.preventDefault(); }); }catch(e){}
+
+/* F3: two tabs can each write before either sees the other's write. Each tab remembers what the store looked like just
+   before its own recent saves; when it then finds someone else's copy in the store, it lays its own recent changes back
+   on top (by task id) instead of adopting the other copy whole. Adds are only re-added when missing; a task the other tab
+   binned in the meantime stays binned. */
+let _recentBases=[], _pinBase=null;
+function recentBases(){ const now=Date.now(); _recentBases=_recentBases.filter(x=>now-x.at<4000); return _recentBases; }
+function noteBase(b){ recentBases(); if(b!=null) _recentBases.push({base:b, at:Date.now()}); if(_recentBases.length>8) _recentBases.shift(); }
+function pinRecentBase(){ if(_pinBase) return; const r=recentBases(); if(r.length) _pinBase=r[0].base; }
+function mergeBaseText(){ if(_pinBase) return _pinBase; const r=recentBases(); return r.length?r[0].base:_memBaseText; }
+function healFromRecent(st){
+  const r=recentBases(); if(!r.length && !_pinBase) return false;
+  let S,B; try{ S=JSON.parse(st); B=JSON.parse(_pinBase||r[0].base); migrate(S); migrate(B); }catch(e){ return false; }
+  const {R,changed}=replayOnto(B, DB, S); if(!changed) return false;
+  const iS=taskIndex(S), iR=taskIndex(R); let diff=iS.size!==iR.size;
+  if(!diff) iR.forEach((x,id)=>{ const y=iS.get(id); if(!y||y.w!==x.w||y.di!==x.di||y.k!==x.k||JSON.stringify(y.t)!==JSON.stringify(x.t)) diff=true; });
+  if(!diff) ['recur','inbox','projects','shopping','gym','dayShapes','dayPlans','bin'].forEach(k=>{ if(JSON.stringify(R[k])!==JSON.stringify(S[k])) diff=true; });
+  if(!diff) return false;                                   // nothing of ours is missing from the stored copy
+  migrate(R); reseedUID(R); const myRev=+DB.rev||0; DB=R; _pinBase=null; _storeStale=false;
+  DB.savedAt=Date.now(); DB.rev=Math.max(+S.rev||0, myRev)+1; DB._uid=UID; _memBaseText=st; writeStore(JSON.stringify(DB));
+  try{ odLog('tab-heal', { rev:DB.rev, changed }); }catch(e){}
+  try{ scheduleSync(); }catch(e){} try{ render(); }catch(e){}
+  return true;
+}
+/* F4: Graph said 401. Try one renewal; if Microsoft refuses it, this is "signed out", not a sync fault. Saving on the device carries on. */
+async function odOn401(){
+  try{ const t=JSON.parse(localStorage.getItem(OD.tokKey)||'null'); if(!t){ odState.expired=true; odState.error=null; return 'signedout'; } t.exp=0; localStorage.setItem(OD.tokKey, JSON.stringify(t)); await getToken(OD, odState); return 'renewed'; }
+  catch(e){ if(e&&e.needsSignIn){ odState.expired=true; odState.error=null; return 'signedout'; } return 'error'; }
+}
+/* F5: every OneDrive request gives up after 20 s, so a hung connection cannot hold the sync lock for ever. */
+function gfetch(url, opts){ if(typeof AbortController==='undefined') return fetch(url, opts); const c=new AbortController(); const t=setTimeout(()=>{ try{ c.abort(); }catch(e){} }, 20000); return fetch(url, Object.assign({}, opts||{}, {signal:c.signal})).finally(()=>clearTimeout(t)); }
 
 
 /* ---------- boot ---------- */
 DB=loadDB();
 /* 2.7 (3.7): first open each day keeps one copy of the store as it was (expendable; skipped when large). */
 try{ const raw=localStorage.getItem(STORE_KEY); const today=computeTodayISO(); const cur=JSON.parse(localStorage.getItem('p27:snap:day')||'null');
-  if(raw && (!cur || cur.date!==today) && raw.length<1.2e6 && p27Usage()+raw.length<3.2e6) localStorage.setItem('p27:snap:day', JSON.stringify({date:today, at:Date.now(), text:raw})); }catch(e){}
+  if(raw && !_corrupt && (!cur || cur.date!==today) && raw.length<1.2e6 && p27Usage()+raw.length<3.2e6) localStorage.setItem('p27:snap:day', JSON.stringify({date:today, at:Date.now(), text:raw})); }catch(e){}
 try{ loadCalCache(); }catch(e){}
 faceBoot();
 render();
@@ -4578,7 +4652,7 @@ setInterval(checkReminders, 60000);
 
 /* 2.7: test/diagnostic handle. Read-mostly; nothing here runs on its own. */
 window.__p27 = { get DB(){ return DB; }, buildImport, toCanonical, fromCanonical, storeCounts, parseWhen, applyImport, undoImport, earlierCopies, p27Usage, replayOnto, saveDB, exportShape, putBack, findTaskById, allIdSet, ruleId, odWrite, odDelete, odNameOk, readLiveStoreReadOnly, persistState, odState, syncLabel };
-Object.assign(window.__p27, { ui, addFromText, parseAddLine, computeFit, planFor, fitDay, parseRange, timeTasks, runUndo, boardCols, openSortOne, render });
+Object.assign(window.__p27, { countTasksIn, datedCount, ui, addFromText, parseAddLine, computeFit, planFor, fitDay, parseRange, timeTasks, runUndo, boardCols, openSortOne, render });
 // Register the service worker (offline-first). Harmless if unsupported.
 /* 2.7 (review item 7): the live planner's service worker deletes every cache not named planner-v1 when it
    activates, so this copy's shell cache can vanish. On each online open, re-add it if it is missing. */
