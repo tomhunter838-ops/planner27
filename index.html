@@ -11,6 +11,7 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png" />
 <meta name="color-scheme" content="light" />
 <title>Planner 2.7</title>
+<script>try{var k=localStorage.getItem("p27:ui:look");if(/^(mist|sage|dawn|slate|night)$/.test(k||""))document.documentElement.setAttribute("data-look",k);}catch(e){}</script>
 <style>
 /* ===== Planner 2.7 stylesheet (stage 2). Tokens = reviewed token sheet, light block (dark is not activated in v1, P2-15).
    Deviation from the sheet, on the orchestrator's instruction: nothing under 12px (sheet had 11px meta/tab). ===== */
@@ -31,7 +32,7 @@
  --shadow-1:0 1px 2px rgba(70,52,28,.05); --shadow-2:0 2px 4px rgba(70,52,28,.06),0 10px 26px rgba(70,52,28,.10); --shadow-3:0 14px 40px rgba(70,52,28,.16);
  --tabh:56px; --addh:60px; --chiph:0px;
  --sat:env(safe-area-inset-top,0px); --sab:env(safe-area-inset-bottom,0px);
- --ease:cubic-bezier(.4,0,.2,1);
+ --ease:cubic-bezier(.4,0,.2,1); --on-ink:#ffffff; --raise:#ffffff; --scrim:rgba(44,39,34,.32);
  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif;
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -40,7 +41,7 @@ body{color:var(--ink);background:var(--bg);min-height:100dvh;font-size:14px;line
 button{font:inherit;cursor:pointer;border:none;background:none;color:inherit;padding:0}
 input,textarea,select{font:inherit;color:var(--ink)}
 a{color:var(--w-ink)}
-::selection{background:#e8d3bf}
+::selection{background:var(--p-line)}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 :focus{outline:none}
 :focus-visible{outline:2px solid var(--focus);outline-offset:2px;border-radius:6px}
@@ -60,12 +61,12 @@ body[data-lay="phone"].v-weekplus #main,body[data-lay="phone"].v-week #main{padd
 /* laptop chrome: nav 48 + bar 48 */
 body[data-lay="lap"] #lapnav{display:flex;align-items:center;gap:16px;height:48px;padding:0 24px;flex:0 0 auto}
 .brand{font-size:15px;font-weight:740;display:flex;align-items:center;gap:8px;white-space:nowrap}
-.brand .mk{width:22px;height:22px;border-radius:7px;background:var(--p);display:grid;place-items:center;color:#fff;font-size:12px;font-weight:800}
+.brand .mk{width:22px;height:22px;border-radius:7px;background:var(--p-ink);display:grid;place-items:center;color:var(--on-ink);font-size:12px;font-weight:800}
 .brand .ver{font-size:12px;font-weight:650;color:var(--muted)}
 .lnav{display:flex;gap:2px;background:var(--paper);border:1px solid var(--hair);border-radius:12px;padding:3px}
 .lnav button{font-size:13px;font-weight:650;color:var(--muted);padding:0 14px;height:32px;border-radius:9px;white-space:nowrap;display:inline-flex;align-items:center}
 .lnav button:hover{color:var(--ink)}
-.lnav button.on{background:var(--ink);color:#fff}
+.lnav button.on{background:var(--ink);color:var(--on-ink)}
 .lnav .tworow{padding:0;width:32px;justify-content:center;margin-left:-2px}
 .lnav .tworow svg{width:16px;height:16px;stroke:currentColor;stroke-width:2;fill:none;stroke-linecap:round}
 .lapright{margin-left:auto;display:flex;gap:8px;align-items:center;min-width:0}
@@ -82,12 +83,12 @@ body[data-lay="lap"].v-today #lapbar{width:100%;max-width:808px;margin:0 auto}
 body.v-today .lapadd{flex:1 1 auto}
 .kindseg{flex:0 0 auto;display:flex;background:var(--paper);border:1px solid var(--hair);border-radius:10px;overflow:hidden;padding:2px;gap:2px}
 .kindseg button{font-size:12px;font-weight:700;padding:0 10px;height:30px;border-radius:7px;color:var(--muted)}
-.kindseg button.on[data-k="personal"]{background:var(--p-ink);color:#fff}
-.kindseg button.on[data-k="work"]{background:var(--w-ink);color:#fff}
+.kindseg button.on[data-k="personal"]{background:var(--p-ink);color:var(--on-ink)}
+.kindseg button.on[data-k="work"]{background:var(--w-ink);color:var(--on-ink)}
 #lapnew,#newtask{flex:1;min-width:0;height:36px;background:var(--paper);border:1px solid var(--edge);border-radius:10px;padding:0 12px;font-size:14px}
 #lapnew:focus,#newtask:focus{outline:2px solid var(--focus);outline-offset:1px}
 #lapnew::placeholder,#newtask::placeholder{color:var(--muted);opacity:1}
-.addgo{flex:0 0 auto;width:36px;height:36px;border-radius:10px;background:var(--ink);color:#fff;font-size:22px;font-weight:400;line-height:1;display:grid;place-items:center}
+.addgo{flex:0 0 auto;width:36px;height:36px;border-radius:10px;background:var(--ink);color:var(--on-ink);font-size:22px;font-weight:400;line-height:1;display:grid;place-items:center}
 .lapadd .addgo{visibility:hidden}
 .lapadd.has .addgo{visibility:visible}
 #lapslot{flex:1;min-width:0;display:flex;align-items:center;justify-content:flex-end;gap:8px}
@@ -100,10 +101,10 @@ body.v-today #lapslot{display:none}
 .hb svg{width:16px;height:16px;stroke:currentColor;stroke-width:2.2;fill:none;stroke-linecap:round;stroke-linejoin:round}
 .hb.icon{padding:0;width:32px}
 .hb:hover{color:var(--ink);border-color:var(--edge)}
-.hb[aria-pressed="true"]{background:var(--ink);color:#fff;border-color:var(--ink)}
+.hb[aria-pressed="true"]{background:var(--ink);color:var(--on-ink);border-color:var(--ink)}
 .hb.gold{background:var(--gold-wash);border-color:var(--gold-line);color:var(--gold-ink)}
 .hb.claude{background:var(--claude-wash);border-color:var(--claude-line);color:var(--claude-ink)}
-.hb.primary{background:var(--ink);border-color:var(--ink);color:#fff}
+.hb.primary{background:var(--ink);border-color:var(--ink);color:var(--on-ink)}
 body[data-lay="phone"] .hb{height:44px;min-width:44px;border-radius:12px;font-size:14px}
 body[data-lay="phone"] .hb.icon{width:44px}
 .linkbtn{font-size:13px;font-weight:650;color:var(--w-ink);text-decoration:underline;text-underline-offset:3px;min-height:32px;padding:0 2px}
@@ -174,10 +175,10 @@ body[data-w="wide"] .cards,body[data-w="laptop"] .cards{grid-template-columns:mi
 .t.done::before{opacity:.5}
 .pill{flex:0 0 auto;font-size:12px;font-weight:700;border-radius:8px;padding:0 6px;line-height:18px;white-space:nowrap;color:var(--muted);background:var(--paper-2);border:1px solid var(--hair)}
 .pill.subs{display:inline-flex;align-items:center;justify-content:center;min-width:32px;min-height:24px;cursor:pointer}
-.pill.subs.alldone{color:var(--good-ink);background:var(--good-wash);border-color:#cfe3cf}
+.pill.subs.alldone{color:var(--good-ink);background:var(--good-wash);border-color:transparent}
 .pill.claude{color:var(--claude-ink);background:var(--claude-wash);border-color:var(--claude-line);text-decoration:none}
 .pill.remind{color:var(--gold-ink);background:var(--gold-wash);border-color:var(--gold-line)}
-.pill.remind.over{color:var(--late-ink);background:var(--late-wash);border-color:#e0bb92}
+.pill.remind.over{color:var(--late-ink);background:var(--late-wash);border-color:transparent}
 .pill.tag{font-weight:600}
 .rbell{flex:0 0 auto;width:16px;height:16px;stroke:var(--gold-ink);stroke-width:2;fill:none;stroke-linecap:round;stroke-linejoin:round}
 .mvbtn{flex:0 0 auto;width:36px;height:36px;border-radius:8px;display:grid;place-items:center;color:var(--muted)}
@@ -187,7 +188,7 @@ body[data-w="wide"] .cards,body[data-w="laptop"] .cards{grid-template-columns:mi
 @media (hover:hover) and (pointer:fine){
   .t .mvbtn{opacity:.45}
   .t:hover .mvbtn,.t .mvbtn:focus-visible{opacity:1}
-  .t:hover{background:#fff;box-shadow:var(--shadow-2)}
+  .t:hover{background:var(--raise);box-shadow:var(--shadow-2)}
   .t.done:hover{background:var(--paper-2);box-shadow:none}
   body[data-lay="lap"] .bcol .grip{display:block;opacity:0}
   body[data-lay="lap"] .bcol .t:hover .grip{opacity:1}
@@ -315,7 +316,7 @@ body[data-lay="phone"].v-weekplus:not(.snapview) #chipbar{display:flex;position:
 .chip.pool .d{color:var(--gold-ink)}
 .chip.today{border-color:var(--p);box-shadow:inset 0 0 0 1px var(--p)}
 .chip.sel{background:var(--ink);border-color:var(--ink);box-shadow:none}
-.chip.sel .d,.chip.sel .n{color:#fff}
+.chip.sel .d,.chip.sel .n{color:var(--on-ink)}
 /* phone add bar + tab bar */
 #addbar{position:fixed;left:0;right:0;bottom:calc(var(--tabh) + var(--sab));z-index:40;height:var(--addh);padding:8px;background:var(--bg)}
 body[data-lay="phone"]:not(.v-today):not(.v-weekplus):not(.v-week) #addbar{display:none}
@@ -402,7 +403,7 @@ body[data-lay="phone"] .card{padding:12px}
 .lookdays button{min-width:0;height:48px;border-radius:10px;background:var(--paper);border:1px solid var(--hair);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px}
 .lookdays .d{font-size:12px;font-weight:700;color:var(--muted);line-height:14px} .lookdays .n{font-size:14px;font-weight:740;line-height:17px}
 .lookdays button.has{border-color:var(--good)}
-.lookdays button.sel{background:var(--ink);border-color:var(--ink)} .lookdays button.sel .d,.lookdays button.sel .n{color:#fff}
+.lookdays button.sel{background:var(--ink);border-color:var(--ink)} .lookdays button.sel .d,.lookdays button.sel .n{color:var(--on-ink)}
 .where{flex:0 0 auto;font-size:12px;color:var(--muted);font-weight:600;white-space:nowrap;padding-right:8px;max-width:45%;overflow:hidden;text-overflow:ellipsis}
 .omrow{border:1px solid var(--hair);border-radius:12px;background:var(--paper);padding:8px 12px;margin-bottom:6px}
 .omrow .l{font-size:14px;font-weight:600;overflow-wrap:anywhere}
@@ -421,7 +422,7 @@ body[data-lay="phone"] .tiles{grid-template-columns:repeat(2,minmax(0,1fr))}
 
 /* ---------- dialogs / sheets ---------- */
 dialog{border:none;border-radius:20px;padding:0;background:var(--paper);color:var(--ink);box-shadow:var(--shadow-3);width:min(440px,calc(100vw - 24px));max-height:min(88dvh,820px);overflow:auto}
-dialog::backdrop{background:rgba(44,39,34,.32)}
+dialog::backdrop{background:var(--scrim)}
 body[data-lay="phone"] dialog{margin:auto auto 0;width:100vw;max-width:100vw;border-radius:20px 20px 0 0;max-height:88dvh}
 dialog.menu{width:min(320px,calc(100vw - 24px))}
 .dlg{padding:20px}
@@ -435,13 +436,13 @@ dialog.menu{width:min(320px,calc(100vw - 24px))}
 .dlg .acts{display:flex;gap:8px;margin-top:16px;position:sticky;bottom:-20px;background:var(--paper);padding:8px 0 4px}
 .dlg .acts button{flex:1;min-height:46px;border-radius:12px;font-size:14px;font-weight:680;padding:0 12px}
 .dlg .acts .cancel{background:var(--paper-2);border:1px solid var(--hair);color:var(--ink-2)}
-.dlg .acts .save{background:var(--ink);color:#fff}
+.dlg .acts .save{background:var(--ink);color:var(--on-ink)}
 .dlg .acts .clear{flex:0 0 auto;background:none;color:var(--late-ink);padding:0 8px}
 .dlg .frow{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .dlg .chiprow{display:flex;flex-wrap:wrap;gap:6px}
 .dlg .chiprow.nowrap{flex-wrap:nowrap}
 .dchip{font-size:13px;font-weight:650;padding:0 12px;min-height:36px;border-radius:10px;background:var(--paper-2);border:1px solid var(--hair);color:var(--ink-2)}
-.dchip.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.dchip.on{background:var(--ink);color:var(--on-ink);border-color:var(--ink)}
 body[data-lay="phone"] .dchip{min-height:44px}
 .dlg .chk{display:flex;gap:8px;align-items:center;text-transform:none;letter-spacing:0;font-size:14px;color:var(--ink)}
 .dlg .chk input{width:auto;min-height:0}
@@ -453,7 +454,7 @@ body[data-lay="phone"] .dchip{min-height:44px}
 .tiles3{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
 .tile-b{min-width:0;min-height:56px;border-radius:12px;background:var(--paper-2);border:1px solid var(--hair);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;padding:4px;font-size:14px;font-weight:700;color:var(--ink)}
 .tile-b small{font-size:12px;font-weight:600;color:var(--muted);white-space:nowrap}
-.tile-b:hover:not(:disabled){border-color:var(--edge);background:#fff}
+.tile-b:hover:not(:disabled){border-color:var(--edge);background:var(--raise)}
 .tile-b.today{border-color:var(--p);box-shadow:inset 0 0 0 1px var(--p)}
 .tile-b.pool{color:var(--gold-ink)}
 .tile-b:disabled{opacity:.45;cursor:default}
@@ -496,7 +497,7 @@ kbd{font:inherit;font-size:12px;font-weight:700;color:var(--muted);border:1px so
 .conn-d{font-size:12px;color:var(--muted);margin-top:2px;line-height:1.45}
 .conn-badge{margin-left:auto;flex:0 0 auto;font-size:12px;font-weight:700;color:var(--muted);border:1px solid var(--hair);border-radius:8px;padding:2px 8px;white-space:nowrap;max-width:50%;overflow:hidden;text-overflow:ellipsis}
 .conn-live{font-size:12px;font-weight:760;color:var(--good-ink);background:var(--good-wash);border-radius:8px;padding:0 6px}
-.conn-btn{width:100%;margin-top:12px;min-height:44px;border-radius:12px;background:var(--ink);color:#fff;font-size:14px;font-weight:680}
+.conn-btn{width:100%;margin-top:12px;min-height:44px;border-radius:12px;background:var(--ink);color:var(--on-ink);font-size:14px;font-weight:680}
 .conn-btn.ghost2{background:var(--paper-2);color:var(--ink-2);border:1px solid var(--hair)}
 .conn-row2{display:flex;gap:8px;margin-top:12px} .conn-row2 .conn-btn{margin-top:0}
 .conn-mini{display:block;margin:8px auto 0;font-size:13px;font-weight:620;color:var(--muted);min-height:32px}
@@ -529,18 +530,18 @@ details.hdisc{margin-top:12px} details.hdisc summary{cursor:pointer;font-size:13
 .hage{font-size:12px;color:var(--muted)}
 .pf-bar{height:8px;background:var(--hair-2);border-radius:6px;overflow:hidden;margin:8px 0 0}
 /* toast, select bar, sparks */
-#toast{position:fixed;left:50%;transform:translateX(-50%);bottom:24px;background:var(--ink);color:#fff;font-size:13px;font-weight:600;padding:10px 16px;border-radius:22px;z-index:1000;box-shadow:var(--shadow-2);pointer-events:none;max-width:92vw;display:none}
-#undotoast{position:fixed;left:50%;transform:translateX(-50%);bottom:24px;background:var(--ink);color:#fff;font-size:13px;font-weight:600;padding:4px 4px 4px 16px;border-radius:24px;z-index:1001;display:none;align-items:center;gap:8px;box-shadow:var(--shadow-2);max-width:min(92vw,640px);min-height:44px}
+#toast{position:fixed;left:50%;transform:translateX(-50%);bottom:24px;background:var(--ink);color:var(--on-ink);font-size:13px;font-weight:600;padding:10px 16px;border-radius:22px;z-index:1000;box-shadow:var(--shadow-2);pointer-events:none;max-width:92vw;display:none}
+#undotoast{position:fixed;left:50%;transform:translateX(-50%);bottom:24px;background:var(--ink);color:var(--on-ink);font-size:13px;font-weight:600;padding:4px 4px 4px 16px;border-radius:24px;z-index:1001;display:none;align-items:center;gap:8px;box-shadow:var(--shadow-2);max-width:min(92vw,640px);min-height:44px}
 #undotoast .msg{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
-#undotoast button{flex:0 0 auto;min-height:36px;padding:0 14px;border-radius:18px;background:#fff;color:var(--ink);font-weight:700;font-size:13px}
-#undotoast button.sec2{background:transparent;color:#fff;border:1px solid rgba(255,255,255,.5)}
+#undotoast button{flex:0 0 auto;min-height:36px;padding:0 14px;border-radius:18px;background:var(--on-ink);color:var(--ink);font-weight:700;font-size:13px}
+#undotoast button.sec2{background:transparent;color:var(--on-ink);border:1px solid currentColor}
 body[data-lay="phone"] #toast,body[data-lay="phone"] #undotoast{bottom:calc(var(--tabh) + var(--sab) + 12px)}
 body[data-lay="phone"].v-today #toast,body[data-lay="phone"].v-today #undotoast{bottom:calc(var(--tabh) + var(--addh) + var(--sab) + 12px)}
 body[data-lay="phone"].v-weekplus #toast,body[data-lay="phone"].v-weekplus #undotoast{bottom:calc(var(--tabh) + var(--addh) + 62px + var(--sab) + 12px)}
 body[data-lay="phone"] #undotoast button{min-height:44px}
-#selbar{position:fixed;left:50%;transform:translateX(-50%);bottom:24px;z-index:60;background:var(--ink);color:#fff;border-radius:14px;padding:6px 6px 6px 14px;display:flex;gap:6px;align-items:center;box-shadow:var(--shadow-3);font-size:14px;white-space:nowrap}
-#selbar button{border-radius:9px;padding:0 12px;min-height:36px;font-size:13px;font-weight:650;background:#4a453d;color:#fff}
-#selbar .save{background:#fff;color:var(--ink)}
+#selbar{position:fixed;left:50%;transform:translateX(-50%);bottom:24px;z-index:60;background:var(--ink);color:var(--on-ink);border-radius:14px;padding:6px 6px 6px 14px;display:flex;gap:6px;align-items:center;box-shadow:var(--shadow-3);font-size:14px;white-space:nowrap}
+#selbar button{border-radius:9px;padding:0 12px;min-height:36px;font-size:13px;font-weight:650;background:transparent;border:1px solid currentColor;color:var(--on-ink)}
+#selbar .save{background:var(--on-ink);color:var(--ink);border-color:transparent}
 body[data-lay="phone"] #selbar{bottom:calc(var(--tabh) + var(--addh) + 62px + var(--sab) + 12px)} body[data-lay="phone"] #selbar button{min-height:44px}
 .spark{position:fixed;width:8px;height:8px;border-radius:50%;pointer-events:none;z-index:999}
 @media (max-width:359px){ .wrap{padding:0 10px} #addbar .kindseg button{padding:0 4px} body[data-lay="phone"].v-weekplus:not(.snapview) #chipbar{gap:2px;padding:6px 4px 0} .chip .d{font-size:12px} .tab .tl{font-size:12px} .phead .rng{font-size:17px} }
@@ -561,6 +562,56 @@ body[data-lay="phone"].v-weekplus:not(.snapview) #chipbar{overflow-x:auto;oversc
 .conn-row2{flex-wrap:wrap} .conn-row2 .conn-btn{flex:1 1 120px;width:auto}
 .eyebrow{flex-wrap:wrap;row-gap:6px}
 .eyebrow .ln{min-width:16px}
+
+/* ---------- job chip, look picker ---------- */
+.pill.job{font-weight:650;max-width:72px;overflow:hidden;text-overflow:ellipsis}
+.looks{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
+body[data-lay="phone"] .looks{grid-template-columns:repeat(3,minmax(0,1fr))}
+.lookbtn{min-width:0;min-height:72px;display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px 4px;border-radius:12px;border:1px solid var(--hair);background:var(--paper)}
+.lookbtn .sw{position:relative;width:100%;max-width:72px;height:36px;border-radius:8px;border:1px solid var(--edge);overflow:hidden;display:block}
+.lookbtn .sw i{position:absolute;left:8px;right:8px;top:8px;height:12px;border-radius:4px;border:1px solid transparent}
+.lookbtn .sw b{position:absolute;left:8px;bottom:6px;width:18px;height:3px;border-radius:2px}
+.lookbtn .nm{font-size:13px;font-weight:650;color:var(--ink-2)}
+.lookbtn.on{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)} .lookbtn.on .nm{color:var(--ink)}
+/* ---------- looks: token overrides only ---------- */
+html[data-look="mist"]{--bg:#e7ecf1;--paper:#fbfcfd;--paper-2:#f0f3f7;--col:#f0f3f7;--col-today:#fbf2e6;--hair:#d7dee6;--hair-2:#e4e9ef;--edge:#a6b2bf;--ring:#7b8795;--focus:#232a31;--ink:#232a31;--ink-2:#3d4853;--muted:#566370;--faint:#566370;--done:#626e7a;--hatch-a:#e4e9ef;--hatch-b:#edf1f5;--gold-wash:#f3ecd8}
+html[data-look="sage"]{--bg:#e6ebe2;--paper:#fbfcf9;--paper-2:#f0f4ec;--col:#f0f4ec;--col-today:#fbf2e6;--hair:#d6ded0;--hair-2:#e4eadf;--edge:#a5b19f;--ring:#7a8774;--focus:#252b24;--ink:#252b24;--ink-2:#404a3f;--muted:#566254;--faint:#566254;--done:#636e60;--hatch-a:#e4eadf;--hatch-b:#edf2e9}
+html[data-look="dawn"]{--bg:#f1e7dc;--paper:#fdfbf8;--paper-2:#f6f0e9;--col:#f6f0e9;--col-today:#fdf1e2;--hair:#e4d9cb;--hair-2:#eee6db}
+html[data-look="dawn"] body{background-image:linear-gradient(135deg,#f6e4d3 0%,#e9e6e6 55%,#d9e5f0 100%);background-attachment:fixed}
+html[data-look="slate"],html[data-look="night"]{color-scheme:dark;--p:#d0764c;--p-ink:#e9a07c;--p-wash:#3b2c25;--p-line:#6a4a3a;--w:#7fa3b3;--w-ink:#a3c6d4;--w-wash:#283338;--w-line:#3f5560;--good:#5c9b69;--good-ink:#93cf9f;--good-wash:#26332a;--gold:#dcb565;--gold-ink:#dcb565;--gold-wash:#3a3322;--gold-line:#5e5232;--late-ink:#eba482;--late-wash:#40291f;--claude:#c4abdb;--claude-ink:#c4abdb;--claude-wash:#322a3a;--claude-line:#4b3f58;--claude-prop:#2c2633;--shadow-1:0 1px 2px rgba(0,0,0,.4);--shadow-2:0 2px 6px rgba(0,0,0,.45);--shadow-3:0 14px 40px rgba(0,0,0,.6);--scrim:rgba(0,0,0,.55)}
+html[data-look="slate"]{--bg:#24272b;--paper:#32363b;--paper-2:#2b2f34;--col:#2b2f34;--col-today:#3b322a;--hair:#41464d;--hair-2:#383d43;--edge:#5f666f;--ring:#8d95a0;--focus:#f0ede6;--ink:#eceae5;--ink-2:#d2cfc8;--muted:#acb0b6;--faint:#acb0b6;--done:#a0a4ab;--hatch-a:#2f3338;--hatch-b:#353a40;--on-ink:#24272b;--raise:#3b4046}
+html[data-look="night"]{--bg:#0e0f10;--paper:#1a1b1d;--paper-2:#151617;--col:#151617;--col-today:#261d15;--hair:#2b2d30;--hair-2:#222426;--edge:#484b50;--ring:#80868e;--focus:#f2efe8;--ink:#e9e6df;--ink-2:#cac6be;--muted:#a3a7ad;--faint:#a3a7ad;--done:#93979d;--hatch-a:#17181a;--hatch-b:#1d1f21;--on-ink:#0e0f10;--raise:#242628}
+html[data-look="slate"] .bcol.today,html[data-look="night"] .bcol.today{border-color:var(--p);box-shadow:inset 0 0 0 1px var(--p)}
+
+/* gym tick on Today; gym days in Review */
+.gymtick{display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:0 14px 0 10px;border:1px solid var(--hair);border-radius:12px;background:var(--paper);color:var(--ink-2);font-size:14px;font-weight:650;white-space:nowrap}
+.gymtick .check{margin-left:0;pointer-events:none}
+.gymtick.on{border-color:var(--good);color:var(--good-ink)}
+.gymweek{font-size:14px;font-weight:600;color:var(--ink-2);margin-top:8px}
+.gymdots{display:flex;gap:6px;align-items:flex-end;margin-top:8px;min-height:12px}
+.gymdots .gw{display:inline-flex;gap:3px;align-items:center;min-width:16px;height:10px;padding:0 1px 2px;border-bottom:1px solid var(--hair)}
+.gymdots .gw i{width:6px;height:6px;border-radius:50%;background:var(--good-ink);display:block}
+/* look picker as a small sheet over the view he is on */
+dialog.looksheet{width:min(460px,calc(100vw - 24px));margin:auto 16px 16px auto}
+dialog.looksheet::backdrop{background:transparent}
+body[data-lay="phone"] dialog.looksheet{margin:auto auto 0;width:100vw}
+#sec-look .fold > summary{min-height:44px}
+/* photo background: a layer behind everything; columns and cards stay solid; none for reduced motion or print */
+#photobg{position:fixed;inset:0;z-index:-1;overflow:hidden;pointer-events:none;--pv:.78}
+#photobg i{position:absolute;inset:-40px;background:center/cover no-repeat;filter:blur(18px)}
+#photobg::after{content:"";position:absolute;inset:0;background:var(--bg);opacity:var(--pv)}
+html[data-photo="band"] #photobg{position:absolute;inset:0 0 auto 0;height:140px;-webkit-mask-image:linear-gradient(to bottom,#000 30%,transparent 100%);mask-image:linear-gradient(to bottom,#000 30%,transparent 100%)}
+html[data-photo="band"] body[data-lay="phone"] #photobg{height:96px}
+html[data-photo="band"] #photobg i{inset:0;filter:none}
+@media (prefers-reduced-motion:reduce){#photobg{display:none}}
+@media print{#photobg{display:none}}
+.photoacts,.photomodes{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.photoacts .hb,.photomodes .hb{min-height:44px}
+.photomodes .hb.on{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink);color:var(--ink)}
+/* with a photo: solid cards, columns and bars keep the look's own softer and coloured inks; the bare page uses the strong ones */
+html[data-photo] :is(.card,body:not([data-lay="phone"]) .bcol,.t,.next,.driver,dialog,#tabbar,#addbar,#toast,#undotoast,#selbar,.donechip,.gymtick){--muted:var(--muted-0);--faint:var(--faint-0);--done:var(--done-0);--p-ink:var(--p-ink-0);--w-ink:var(--w-ink-0);--good-ink:var(--good-ink-0);--gold-ink:var(--gold-ink-0);--late-ink:var(--late-ink-0)}
+@media (prefers-reduced-motion:reduce){html[data-photo]{--muted:var(--muted-0)!important;--faint:var(--faint-0)!important;--done:var(--done-0)!important;--p-ink:var(--p-ink-0)!important;--w-ink:var(--w-ink-0)!important;--good-ink:var(--good-ink-0)!important;--gold-ink:var(--gold-ink-0)!important;--late-ink:var(--late-ink-0)!important}}
+@media print{html[data-photo]{--muted:var(--muted-0)!important;--faint:var(--faint-0)!important;--done:var(--done-0)!important;--p-ink:var(--p-ink-0)!important;--w-ink:var(--w-ink-0)!important;--good-ink:var(--good-ink-0)!important;--gold-ink:var(--gold-ink-0)!important;--late-ink:var(--late-ink-0)!important}}
 </style>
 </head>
 <body>
@@ -692,7 +743,7 @@ function replayOnto(B, L, S){
     const same = b.w===x.w && b.di===x.di && b.k===x.k && JSON.stringify(b.t)===JSON.stringify(x.t);
     if(!same){ removeFromR(id); insertR(x); changed++; } });                                      // edited or moved here
   iB.forEach((b,id)=>{ if(!iL.has(id)){ removeFromR(id); changed++; } });                         // removed here (binned or merged away)
-  ['recur','inbox','projects','shopping','gym','health','dayShapes','dayPlans','imports','schema'].forEach(k=>{ if(JSON.stringify(L[k])!==JSON.stringify(B[k])) R[k]=L[k]; });
+  ['recur','inbox','projects','shopping','gym','health','dayShapes','dayPlans','imports','schema','jobList'].forEach(k=>{ if(JSON.stringify(L[k])!==JSON.stringify(B[k])) R[k]=L[k]; });
   const bb=B.bin||{}, lb=L.bin||{}; R.bin=Object.assign({}, R.bin||{});
   Object.keys(lb).forEach(k=>{ if(!bb[k]) R.bin[k]=lb[k]; }); Object.keys(bb).forEach(k=>{ if(!lb[k]) delete R.bin[k]; });
   return { R, changed };
@@ -1219,7 +1270,7 @@ function countTasksIn(db){
   return { tasks, subs };
 }
 /* 2.7 (2.5): top-level keys v2.4 does not know. Carried through export and every adopt path. */
-const P27_EXTRA = ['dayShapes','dayPlans','bin','imports','schema'];
+const P27_EXTRA = ['dayShapes','dayPlans','bin','imports','schema','jobList'];
 function exportObj(){ const o={ weeks:DB.weeks, recur:DB.recur, inbox:DB.inbox, projects:DB.projects, shopping:DB.shopping, health:DB.health, gym:DB.gym||{} }; P27_EXTRA.forEach(k=>{ if(DB[k]!==undefined) o[k]=DB[k]; }); o.savedAt=Date.now(); o.rev=(Number.isInteger(DB.rev)?DB.rev:1); o.pushedBy=deviceId(); o.v=3; return o; }
 function exportShape(){ return JSON.stringify(exportObj()); }   // v2.1: carry rev + device id   // v2.1: carry rev + device id
 
@@ -1818,7 +1869,7 @@ document.addEventListener('click', e=>{
   if(act==='carrynext'){ doCarryNext(); return; }
   if(act==='pullpools'){ doPullPools(); return; }
   if(act==='latejump'){ const sc=document.getElementById('wpscroll'); if(sc) sc.scrollTo({left:0,behavior:'smooth'}); return; }
-  if(act==='gym'){ const gd=a.dataset.date; if(gd){ DB.gym=DB.gym||{}; if(DB.gym[gd]){ delete DB.gym[gd]; } else { DB.gym[gd]=true; burstAt(a); } saveDB(); rerenderInPlace(); } return; }
+  if(act==='gym'){ gymToggle(a.dataset.date); return; }
   if(act==='addrecur'){ openAddRecur(); return; }
   if(act==='delrecur'){ const ri=+a.dataset.ri; const r=DB.recur[ri]; if(r) openConfirm('Remove recurring rule?', `“${esc(r.label)}” will stop being placed in new weeks. Tasks already placed stay exactly where they are.`, 'Remove rule', ()=>{ DB.recur.splice(ri,1); saveDB(); renderMore(); }); return; }
   if(act==='lapadd'){ addFromField(document.getElementById('lapnew')); return; }
@@ -2891,7 +2942,7 @@ async function claudeProposeSteps(pid){
 }
 function claudeCardInner(){
   const be=claudeBackend();
-  return `<div class="conn"><div class="conn-h"><div><div class="conn-t">Claude · intelligence</div><div class="conn-d">Break into steps · adjust a day plan · read health trends · sort the inbox · plan project steps. Suggestions only; you approve every change</div></div><span class="conn-badge" style="color:${be?'var(--good)':'var(--gold)'}">${be==='lab'?'Active · here':be==='worker'?'Active · worker':'Needs worker'}</span></div>
+  return `<div class="conn"><div class="conn-h"><div><div class="conn-t">Claude · intelligence</div><div class="conn-d">Break into steps · adjust a day plan · read health trends · sort the inbox · plan project steps. Suggestions only; you approve every change</div></div><span class="conn-badge" style="color:${be?'var(--good-ink)':'var(--gold-ink)'}">${be==='lab'?'Active · here':be==='worker'?'Active · worker':'Needs worker'}</span></div>
   ${be==='worker'?'<div class="conn-d" style="margin-top:8px">Runs through your own Cloudflare worker. Your API key lives only in that worker\'s secret — never in this page, this device or your planner file. Claude sees whatever you ask about — your week summary, a stuck task, a project, or the thoughts in your inbox — plus a short note about how you work and what your life looks like, so the tone fits. Nothing else leaves the planner, and nothing is stored there.</div>':''}
   ${be?'' :'<div class="conn-d" style="margin-top:8px">On the live site this talks to Claude through a tiny Cloudflare worker that holds your API key — one file, ~20 lines. In this design lab it works out of the box.</div>'}</div>`;
 }
@@ -3848,9 +3899,10 @@ function taskRow(t, ctx, opts={}){
   const subsPill=sc?`<button class="pill subs ${sd===sc?'alldone':''}" data-act="toggle" aria-expanded="${!!t.open}" aria-label="Steps: ${sd} done, ${sc} in all. Show or hide">${sd}/${sc}</button>`:'';
   const bell=(t.remind&&!t.done)?`<svg class="rbell" viewBox="0 0 24 24" role="img" aria-label="Reminder ${attr(fmtRemind(t.remind))}">${IC.bell}</svg>`:'';
   const tag=opts.tag?`<span class="pill tag">${esc(opts.tag)}</span>`:'';
+  const job=(t.job&&t.job.no)?`<span class="pill job" title="${attr(t.job.no+' · '+(t.job.name||''))}">${esc(t.job.no)}</span>`:'';
   const grip=opts.grip?`<span class="grip" data-act="grip" aria-hidden="true">⠿</span>`:'';
   const mv=opts.nomove?'':`<button class="mvbtn" data-act="movesheet" title="Move to…" aria-label="Move task: ${attr(short)}">${IC.move}</button>`;
-  let html=`<div class="t ${t.kind==='work'?'kwork':''} ${t.done?'done':''} ${ui.selMode&&ui.sel.has(t.id)?'seled':''} ${opts.cls||''}" ${sel}>${grip}<button class="check" data-act="check" aria-pressed="${!!t.done}" aria-label="${t.done?'Done, tick to undo':'Complete'}: ${attr(short)}">${CHK}</button><span class="lab" data-act="edit" role="button" tabindex="0"${t.label.length>40?` title="${attr(t.label)}"`:''}><span class="lt"${(opts.num&&!t.done)?` data-num="${opts.num}"`:''}>${esc(t.label)}</span></span>${tag}${bell}${subsPill}${mv}</div>`;
+  let html=`<div class="t ${t.kind==='work'?'kwork':''} ${t.done?'done':''} ${ui.selMode&&ui.sel.has(t.id)?'seled':''} ${opts.cls||''}" ${sel}>${grip}<button class="check" data-act="check" aria-pressed="${!!t.done}" aria-label="${t.done?'Done, tick to undo':'Complete'}: ${attr(short)}">${CHK}</button><span class="lab" data-act="edit" role="button" tabindex="0"${t.label.length>40?` title="${attr(t.label)}"`:''}><span class="lt"${(opts.num&&!t.done)?` data-num="${opts.num}"`:''}>${esc(t.label)}</span></span>${tag}${job}${bell}${subsPill}${mv}</div>`;
   if(t.open && sc && !opts.nosubs){
     html+=`<div class="subs" ${sel}>${t.subs.map((s,j)=>`<div class="sub ${s.done?'done':''}" data-sub="${j}" data-sid="${attr(s.id)}"><button class="subcheck" data-act="subcheck" aria-pressed="${!!s.done}" aria-label="Step: ${attr(s.label)}">${CHK}</button><span class="lab"${j<26?` data-ltr="${String.fromCharCode(65+j)}"`:''}>${esc(s.label)}</span><button class="x" data-act="delsub" aria-label="Remove step: ${attr(s.label)}">×</button></div>`).join('')}<button class="sub add" data-act="addsub">+ Add a step</button></div>`;
   }
@@ -3887,7 +3939,7 @@ function renderToday(){
   const all=dayOrder(wk,di); const undone=all.filter(t=>!t.done && !dueIds.has(t.id));
   const next=undone[0], then=undone.slice(1,3), rest=undone.slice(3); const doneHere=all.filter(t=>t.done);
   const dn=doneTodayCount();
-  const head=`<div class="dayhead"><div><h1 class="dow" style="margin:0">${DOWFULL[di]}</h1><div class="date"><b>${d.n} ${d.month}</b></div></div><div class="headright">${dn?`<span class="donechip" id="donechip">${dn} done</span>`:''}</div></div>`;
+  const head=`<div class="dayhead"><div><h1 class="dow" style="margin:0">${DOWFULL[di]}</h1><div class="date"><b>${d.n} ${d.month}</b></div></div><div class="headright">${dn?`<span class="donechip" id="donechip">${dn} done</span>`:''}${gymTodayHTML()}</div></div>`;
   const pin=(DB.projects||[]).find(p=>p.pinned); let driver='';
   if(pin){ const open=allProjectTasks(pin.id).filter(x=>!x.t.done); if(open.length) driver=`<button class="driver" data-act="openproject" data-pid="${attr(pin.id)}"><span><b>${esc(pin.name)}</b> · next: ${esc(open[0].t.label.slice(0,60))}</span><span class="go" aria-hidden="true">›</span></button>`; }
   let body='';
@@ -4028,6 +4080,7 @@ function openWeekMenu(){
     ${lap?(ui.view==='week'?`<button data-m="weekplus">Back to Week+</button>`:`<button data-m="tworow">Two-row week</button>`):`<button data-m="oldboard" aria-pressed="${ui.oldBoard}">${ui.oldBoard?'Back to one list at a time':'Old sideways view'}</button>`}
     <hr><button data-m="past" ${past?'':'disabled'}>Past weeks${past?'':'<span class="sub2">nothing waiting</span>'}</button>
     ${isThis?`<button data-m="carrynext">Carry everything unfinished to next week…</button>`:''}
+    <hr><button data-m="look" id="menulook">Look: ${lookName()} ▸</button>
   </div><div class="acts"><button class="cancel" data-x="c">Close</button></div>`,'menu');
   dlg.querySelector('[data-x=c]').addEventListener('click',closeDialog);
   dlg.querySelector('#wkmenu').addEventListener('click', e=>{ const b=e.target.closest('[data-m]'); if(!b||b.disabled) return; const m=b.dataset.m; closeDialog();
@@ -4036,7 +4089,7 @@ function openWeekMenu(){
     else if(m==='select'){ ui.selMode=true; ui.sel.clear(); selTouch(); render(); }
     else if(m==='tworow') go('week'); else if(m==='weekplus') go('weekplus');
     else if(m==='oldboard'){ ui.oldBoard=!ui.oldBoard; lsSet('p27:ui:oldboard',ui.oldBoard?'1':'0'); render(); }
-    else if(m==='past') openPastWeeks(); else if(m==='carrynext') doCarryNext(); });
+    else if(m==='past') openPastWeeks(); else if(m==='carrynext') doCarryNext(); else if(m==='look') openLookSheet(); });
 }
 function openPastWeeks(){
   const items=pastUnfinishedAll();
@@ -4197,6 +4250,7 @@ function openEdit(ctx){
     <div class="frow" style="margin-top:6px"><input id="f-newsub" placeholder="Add a step…" aria-label="Add a step" enterkeyhint="done" style="flex:1;min-width:0" /><button type="button" class="hb" data-x="addsub" style="min-height:44px">Add</button></div>
     <label>Order in its list</label><div class="ordrow"><button type="button" class="hb" data-x="top">Move to top</button><button type="button" class="hb" data-x="up">Move up</button><button type="button" class="hb" data-x="down">Move down</button></div>
     <label for="f-proj">Project</label><select id="f-proj">${projOpts}</select>
+    ${jobFieldHTML(t)}
     <details class="more" id="f-more"><summary>More options</summary>
       <label>Remind me</label><div class="chiprow" id="f-remindq"><button type="button" class="dchip" data-rq="none">None</button><button type="button" class="dchip" data-rq="tonight">Tonight 7pm</button><button type="button" class="dchip" data-rq="tom">Tomorrow 9am</button></div>
       <input id="f-remind" type="datetime-local" aria-label="Reminder date and time" value="${t.remind?attr((''+t.remind).slice(0,16)):''}" style="margin-top:6px" />
@@ -4216,6 +4270,7 @@ function openEdit(ctx){
   const addSub=()=>{ const i=dlg.querySelector('#f-newsub'); const v=i.value.trim(); if(!v) return; const c=live(); if(!c) return; c.t.subs.push({id:uid(),label:v,done:false}); i.value=''; saved(); paintSubs(); i.focus(); };
   dlg.querySelector('#f-newsub').addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); addSub(); } });
   dlg.querySelector('#f-proj').addEventListener('change',e=>{ const c=live(); if(!c) return; c.t.projectId=e.target.value||null; saved(); });
+  wireJobField(id, saved);
   dlg.querySelector('#f-remind').addEventListener('change',e=>{ const c=live(); if(!c) return; c.t.remind=e.target.value||null; saved(); });
   dlg.querySelector('.dlg').addEventListener('click', e=>{
     const sx=e.target.closest('[data-sx]');
@@ -4234,6 +4289,7 @@ function openEdit(ctx){
     if(cm){ const c=live(); if(!c) return; c.t.claude=cm.dataset.cm||null; saved(); dlg.querySelectorAll('#f-claude .dchip').forEach(x=>x.classList.toggle('on',x===cm)); return; }
     const x=e.target.closest('[data-x]')?.dataset.x; if(!x) return;
     if(x==='addsub'){ addSub(); return; }
+    if(x==='jobrefresh'){ flushSheetLabel(); closeDialog(); openJobRefresh(id); return; }
     if(x==='top'||x==='up'||x==='down'){ flushSheetLabel(); const c=live(); if(!c) return; const i=c.idx, n=c.arr.length; const j=x==='top'?0:x==='up'?Math.max(0,i-1):Math.min(n-1,i+1); if(j===i) return; const snap=snapPos(id); c.arr.splice(i,1); c.arr.splice(j,0,c.t); setUndo('reorder “'+c.t.label.slice(0,30)+'”', ()=>{ if(restorePos(snap)){ saveDB(); render(); } }); saved(); flashToast(x==='top'?'Moved to the top of its list':x==='up'?'Moved up':'Moved down'); return; }
     if(x==='save'){ closeDialog(); return; }
     if(x==='move'){ flushSheetLabel(); const c=live(); closeDialog(); if(c) openMoveSheet(c); return; }
@@ -4258,6 +4314,7 @@ document.addEventListener('click', e=>{
   if(act==='notnow'){ const h=a.closest('[data-id]'); if(h) notNow(h.dataset.id); return; }
   if(act==='sortone'){ openSortOne(); return; }
   if(faceAct2(act, a, e)) return;
+  if(faceAct3(act, a)) return;
 });
 document.addEventListener('keydown', e=>{
   if(e.key!=='Enter' && e.key!==' ') return; const el=e.target; if(!el || !el.matches || !el.matches('[role="button"][tabindex]')) return;
@@ -4429,7 +4486,7 @@ function healthRec(iso){ const R=healthDayR(iso); return (R&&R.src!=='sample')?R
 function healthUpTo(){ for(let i=0;i<120;i++){ const iso=addDays(todayISO,-i); if(healthRec(iso)) return iso; } return null; }
 function healthSection(){
   const up=healthUpTo(); const gymOn=!!(DB.gym&&DB.gym[todayISO]);
-  const gym=`<div class="gymrow"><button class="check ${gymOn?'done':''}" data-act="gym" data-date="${todayISO}" aria-pressed="${gymOn}" aria-label="Gym today">${CHK}</button><span>Gym today</span></div>`;
+  const gym=`<div class="gymrow"><button class="check ${gymOn?'done':''}" data-act="gym" data-date="${todayISO}" aria-pressed="${gymOn}" aria-label="Gym today">${CHK}</button><span>Gym today</span></div>${gymTrackHTML()}`;
   if(!up) return `<div class="note">No health data on this device yet. Connections are under More.</div>${gym}`;
   const last=(f,back)=>{ for(let i=0;i<=(back||7);i++){ const iso=addDays(todayISO,-i); const r=healthRec(iso); if(r&&r[f]!=null) return {iso, v:r[f]}; } return null; };
   const dl=x=>x?(x.iso===todayISO?'today':x.iso===addDays(todayISO,-1)?'yesterday':dmon(x.iso)):'';
@@ -4500,7 +4557,7 @@ function renderMore(){
   const imp=`<div class="card" id="sec-import">${importBackupHTML()}</div>`;
   const bin=`<div class="card" id="sec-bin">${binHTML()}</div>`;
   const conn=`<div class="card"><div class="eyebrow">Connections<span class="ln"></span></div><div id="odbox">${renderConnectionsInner()}</div>${odLogRead().length?`<details class="fold"><summary>Sync details</summary>${renderSyncLog()}</details>`:''}<div class="note" style="margin-top:8px">Planner 2.7 · a separate copy that never touches your current planner.</div></div>`;
-  view.innerHTML=`<div class="lapwrap grid2"><div class="dayhead"><div><h1 class="dow" style="margin:0">More</h1></div></div><div class="cards"><div class="colstack">${claude}${lists}${recur}${bin}</div><div class="colstack">${imp}${conn}</div></div></div>`;
+  view.innerHTML=`<div class="lapwrap grid2"><div class="dayhead"><div><h1 class="dow" style="margin:0">More</h1></div></div><div class="cards"><div class="colstack">${claude}${lists}${jobsCardHTML()}${recur}${bin}</div><div class="colstack">${looksCardHTML()}${imp}${conn}</div></div></div>`;
 }
 
 /* ---------- PROJECTS: open first, done folded, "n open" (no ratios, no bars) ---------- */
@@ -4568,6 +4625,8 @@ function faceAct2(act, a, e){
 }
 function faceBoot(){
   ui.view=isLap()?'weekplus':'today';
+  applyLook();
+  try{ photoBoot(); }catch(e){}
   wireAddFields();
   try{ dlg.addEventListener('close', sheetClosing); }catch(e){}
   if(_corrupt) setTimeout(showCorruptNotice, 250); else recoverSheetDraft();
@@ -4616,7 +4675,7 @@ function healFromRecent(st){
   const {R,changed}=replayOnto(B, DB, S); if(!changed) return false;
   const iS=taskIndex(S), iR=taskIndex(R); let diff=iS.size!==iR.size;
   if(!diff) iR.forEach((x,id)=>{ const y=iS.get(id); if(!y||y.w!==x.w||y.di!==x.di||y.k!==x.k||JSON.stringify(y.t)!==JSON.stringify(x.t)) diff=true; });
-  if(!diff) ['recur','inbox','projects','shopping','gym','dayShapes','dayPlans','bin'].forEach(k=>{ if(JSON.stringify(R[k])!==JSON.stringify(S[k])) diff=true; });
+  if(!diff) ['recur','inbox','projects','shopping','gym','dayShapes','dayPlans','bin','jobList'].forEach(k=>{ if(JSON.stringify(R[k])!==JSON.stringify(S[k])) diff=true; });
   if(!diff) return false;                                   // nothing of ours is missing from the stored copy
   migrate(R); reseedUID(R); const myRev=+DB.rev||0; DB=R; _pinBase=null; _storeStale=false;
   DB.savedAt=Date.now(); DB.rev=Math.max(+S.rev||0, myRev)+1; DB._uid=UID; _memBaseText=st; writeStore(JSON.stringify(DB));
@@ -4631,6 +4690,201 @@ async function odOn401(){
 }
 /* F5: every OneDrive request gives up after 20 s, so a hung connection cannot hold the sync lock for ever. */
 function gfetch(url, opts){ if(typeof AbortController==='undefined') return fetch(url, opts); const c=new AbortController(); const t=setTimeout(()=>{ try{ c.abort(); }catch(e){} }, 20000); return fetch(url, Object.assign({}, opts||{}, {signal:c.signal})).finally(()=>clearTimeout(t)); }
+
+/* =====================================================================================================
+   2.7 JOBS and LOOKS (owner request, 20 Nov). A task may carry one optional job {no, name}. The job list
+   is its own top-level key (DB.jobList), filled only when he refreshes it: by pasting the Word table or by
+   choosing the .docx, which is read here in the page (no Microsoft call). Only the job number and the
+   Project Name are ever kept. Nothing here writes on load. Looks are per device (p27:ui:look).
+   ===================================================================================================== */
+const JOB_MIN_YEAR=25;
+function normJobNo(s){ let t=String(s==null?'':s).replace(/\s+/g,'').toUpperCase(); if(/^JI/.test(t)) t='J1'+t.slice(2); return /^J\d{5}$/.test(t)?t:null; }
+function jobStart(line){ return /^\s*J\s*[\dI](\s*\d)/i.test(line); }
+function jobsFromRows(rows){
+  const map=new Map(); let bad=0, dup=0, old=0;
+  (rows||[]).forEach(r=>{ const c0=String(r[0]==null?'':r[0]).trim(); if(!c0 && !String(r[1]==null?'':r[1]).trim()) return; if(/^job\s*no/i.test(c0)) return;
+    const no=normJobNo(c0); if(!no){ bad++; return; }
+    const name=String(r[1]==null?'':r[1]).replace(/\s+/g,' ').trim().slice(0,120);
+    if(+no.slice(1,3)<JOB_MIN_YEAR){ old++; return; }
+    if(map.has(no)){ dup++; map.delete(no); } map.set(no,{no,name}); });
+  return { items:[...map.values()].sort((a,b)=>a.no<b.no?1:a.no>b.no?-1:0), bad, dup, old };
+}
+/* Word gives one line per row with tabs between cells; a wrapped cell can arrive as a second line, which is joined to the row before */
+function rowsFromPaste(text){ const lines=[]; String(text||'').split(/\r?\n/).forEach(l=>{ if(!l.trim()) return; if(jobStart(l) || /^\s*job\s*no/i.test(l) || !lines.length) lines.push(l); else lines[lines.length-1]+=' '+l; }); return lines.map(l=>l.split('\t')); }
+/* a .docx is a zip: find word/document.xml through the central directory, inflate it with the browser's own DecompressionStream */
+async function inflateRaw(u8){ const s=new Blob([u8]).stream().pipeThrough(new DecompressionStream('deflate-raw')); return new Uint8Array(await new Response(s).arrayBuffer()); }
+async function zipEntry(buf, name){
+  const dv=new DataView(buf), n=buf.byteLength; let e=-1; for(let i=n-22;i>=Math.max(0,n-65557);i--){ if(dv.getUint32(i,true)===0x06054b50){ e=i; break; } } if(e<0) throw new Error('That is not a Word .docx file.');
+  const cnt=dv.getUint16(e+10,true); let p=dv.getUint32(e+16,true); const td=new TextDecoder();
+  for(let k=0;k<cnt;k++){ if(p+46>n || dv.getUint32(p,true)!==0x02014b50) throw new Error('The file could not be read.');
+    const method=dv.getUint16(p+10,true), csize=dv.getUint32(p+20,true), nl=dv.getUint16(p+28,true), xl=dv.getUint16(p+30,true), cl=dv.getUint16(p+32,true), off=dv.getUint32(p+42,true);
+    if(td.decode(new Uint8Array(buf,p+46,nl))===name){ if(dv.getUint32(off,true)!==0x04034b50) throw new Error('The file could not be read.'); const data=new Uint8Array(buf, off+30+dv.getUint16(off+26,true)+dv.getUint16(off+28,true), csize); if(method===0) return data; if(method===8) return inflateRaw(data); throw new Error('The file is packed in a way this page cannot read.'); }
+    p+=46+nl+xl+cl; }
+  throw new Error('That is not a Word .docx file.');
+}
+async function rowsFromDocx(file){
+  const xml=new TextDecoder('utf-8').decode(await zipEntry(await file.arrayBuffer(),'word/document.xml')); const doc=new DOMParser().parseFromString(xml,'application/xml'); if(doc.getElementsByTagName('parsererror').length) throw new Error('The file could not be read.');
+  const kids=(el,nm)=>[...el.children].filter(c=>c.nodeName===nm);
+  const cellText=tc=>[...tc.getElementsByTagName('w:p')].map(p=>{ let s=''; const walk=nd=>{ for(const c of nd.childNodes){ if(c.nodeName==='w:t') s+=c.textContent; else if(c.nodeName==='w:tab'||c.nodeName==='w:br'||c.nodeName==='w:cr') s+=' '; else if(c.nodeType===1) walk(c); } }; walk(p); return s; }).join(' ');
+  const rows=[]; [...doc.getElementsByTagName('w:tbl')].forEach(tbl=>kids(tbl,'w:tr').forEach(tr=>{ const cells=kids(tr,'w:tc'); if(cells.length) rows.push(cells.map(cellText)); }));
+  return rows;
+}
+function jobItems(){ return (DB.jobList&&Array.isArray(DB.jobList.items))?DB.jobList.items:[]; }
+function jobListLine(){ const L=DB.jobList; if(!L||!Array.isArray(L.items)) return 'No job list yet';
+  const day=ts=>{ const d=new Date(ts); const iso=isoOf(d.getFullYear(),d.getMonth(),d.getDate()); return iso===todayISO?'today':d.getDate()+' '+MON[d.getMonth()]; };
+  const ch=L.modified&&!isNaN(new Date(L.modified))?' · changed '+(()=>{ const d=new Date(L.modified); return d.getDate()+' '+MON[d.getMonth()]; })():'';
+  return 'From '+(L.source||'a pasted list')+ch+(L.refreshedAt?' · refreshed '+day(L.refreshedAt)+' '+hhmm(L.refreshedAt):'')+' · J'+JOB_MIN_YEAR+' and later'; }
+function jobOptions(t, q){
+  const L=jobItems(); const cur=(t.job&&t.job.no)?t.job:null; const inList=!!cur&&L.some(j=>j.no===cur.no); const f=String(q||'').trim().toLowerCase();
+  const cut=s=>{ s=String(s||''); return s.length>64?s.slice(0,63)+'…':s; }; const opt=(v,txt,sel)=>`<option value="${attr(v)}"${sel?' selected':''}>${esc(txt)}</option>`; const hit=j=>!f||j.no.toLowerCase().includes(f)||String(j.name||'').toLowerCase().includes(f);
+  let h=opt('','No job',!cur);
+  if(cur&&!inList) h+=opt(cur.no, cur.no+' · '+cut(cur.name)+' (not in current list)', true);
+  else if(cur&&f&&!hit(cur)) h+=opt(cur.no, cur.no+' · '+cut(cur.name), true);
+  L.filter(hit).forEach(j=>{ h+=opt(j.no, j.no+' · '+cut(j.name), !!(cur&&cur.no===j.no)); });
+  return h+opt('__refresh','Refresh job numbers…',false);
+}
+function jobFieldHTML(t){ const many=jobItems().length>12;
+  return `<label for="f-job">Job</label>${many?`<input id="f-jobq" placeholder="Type to find a job…" aria-label="Find a job by number or name" autocomplete="off" style="margin-bottom:6px" />`:''}<select id="f-job">${jobOptions(t,'')}</select>
+    <div class="note" id="f-jobline" style="margin-top:6px">${esc(jobListLine())}${DB.jobList?'':' · <button type="button" class="linkbtn" data-x="jobrefresh">Refresh job numbers</button>'}</div>`; }
+function wireJobField(id, saved){
+  const sel=dlg.querySelector('#f-job'); if(!sel) return; const q=dlg.querySelector('#f-jobq');
+  if(q) q.addEventListener('input',()=>{ const c=ctxOf(id); if(c) sel.innerHTML=jobOptions(c.t, q.value); });
+  sel.addEventListener('change',()=>{ const v=sel.value; const c=ctxOf(id); if(!c) return;
+    if(v==='__refresh'){ flushSheetLabel(); closeDialog(); openJobRefresh(id); return; }
+    const was=c.t.job?JSON.parse(JSON.stringify(c.t.job)):null;
+    if(!v) delete c.t.job; else { const j=jobItems().find(x=>x.no===v) || ((was&&was.no===v)?was:null); if(!j) return; c.t.job={ no:j.no, name:j.name }; }
+    saved(); setUndo('change the job on “'+c.t.label.slice(0,30)+'”', ()=>{ const c2=findTaskById(id); if(c2){ if(was) c2.t.job=was; else delete c2.t.job; saveDB(); render(); } }); });
+}
+function openJobRefresh(returnId){
+  let pending=null;
+  openDialog(`<h3>Refresh job numbers</h3><p>Open the job list in Word, select the table (Ctrl+A), copy, and paste here.</p>
+    <textarea id="job-paste" aria-label="Paste the job list here" placeholder="Paste here" style="min-height:96px"></textarea>
+    ${isLap()?`<div class="frow" style="margin-top:8px"><button type="button" class="hb" data-x="file" style="min-height:44px">Choose the Word file…</button></div>`:''}<input type="file" id="job-file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden />
+    <p id="job-prev" role="status" style="margin:12px 0 0;color:var(--ink-2);font-size:14px;min-height:20px"></p><p class="note">Only the job number and the project name are kept. J${JOB_MIN_YEAR} and later.</p>
+    <div class="acts"><button class="cancel" data-x="c">Cancel</button><button class="save" data-x="use" hidden>Use this list</button></div>`);
+  const prev=dlg.querySelector('#job-prev'), use=dlg.querySelector('[data-x=use]');
+  const show=(rows, source, modified)=>{ const r=jobsFromRows(rows); const n=r.items.length;
+    if(!n){ pending=null; use.hidden=true; prev.textContent='0 jobs found'+(r.bad?' · '+r.bad+' row'+(r.bad!==1?'s':'')+' not understood':'')+(r.old?' · '+r.old+' older than J'+JOB_MIN_YEAR+' left out':'')+'. Nothing changes.'; return; }
+    pending={ items:r.items, source, modified:modified||null }; use.hidden=false;
+    prev.textContent=`${n} job${n!==1?'s':''} from ${r.items[n-1].no} to ${r.items[0].no} · ${r.bad} row${r.bad!==1?'s':''} not understood`+(r.dup?` · ${r.dup} number${r.dup!==1?'s':''} repeated, last one kept`:''); };
+  const ta=dlg.querySelector('#job-paste'); ta.addEventListener('input',()=>{ if(!ta.value.trim()){ pending=null; use.hidden=true; prev.textContent=''; return; } show(rowsFromPaste(ta.value), 'a pasted list', null); });
+  const fi=dlg.querySelector('#job-file'); fi.addEventListener('change', async ()=>{ const f=fi.files&&fi.files[0]; if(!f) return; prev.textContent='Reading '+f.name+'…';
+    try{ show(await rowsFromDocx(f), f.name, f.lastModified?new Date(f.lastModified).toISOString():null); }catch(e){ pending=null; use.hidden=true; prev.textContent=String(e&&e.message||'The file could not be read.')+' Nothing changes.'; } fi.value=''; });
+  dlg.querySelector('.dlg').addEventListener('click', e=>{ const x=e.target.closest('[data-x]')?.dataset.x; if(!x) return;
+    if(x==='file'){ fi.click(); return; }
+    if(x==='c'){ closeDialog(); if(returnId){ const c=ctxOf(returnId); if(c) openEdit(c); } return; }
+    if(x==='use' && pending){ const before=JSON.stringify(DB.jobList||null); const n=pending.items.length; DB.jobList={ source:pending.source, modified:pending.modified, refreshedAt:Date.now(), items:pending.items }; saveDB(); closeDialog(); render();
+      flashUndo(`Job list updated · ${n} job${n!==1?'s':''}`, ()=>{ const b=JSON.parse(before); if(b) DB.jobList=b; else delete DB.jobList; saveDB(); render(); }, {label:'refresh job numbers'});
+      if(returnId){ const c=ctxOf(returnId); if(c) openEdit(c); } } });
+}
+function jobsCardHTML(){ const n=jobItems().length; return `<div class="card" id="sec-jobs"><div class="eyebrow">Job numbers<span class="ln"></span></div><div class="note" id="jobline">${esc(jobListLine())}${n?' · '+n+' job'+(n!==1?'s':''):''}</div><div style="margin-top:8px"><button class="hb" data-act="jobrefresh" style="min-height:44px">Refresh job numbers…</button></div><p class="note" style="margin:8px 0 0">Pick a job for a task in the task’s own sheet, under Project.</p></div>`; }
+
+/* ---------- Looks: six sets of colour tokens on the root, chosen per device ---------- */
+const LOOKS=[['paper','Paper','#efe8da','#fcfaf5','#2c2722'],['mist','Mist','#e7ecf1','#fbfcfd','#232a31'],['sage','Sage','#e6ebe2','#fbfcf9','#252b24'],['dawn','Dawn','linear-gradient(135deg,#f6e4d3,#e9e6e6 55%,#d9e5f0)','#fdfbf8','#2c2722'],['slate','Slate','#24272b','#32363b','#eceae5'],['night','Night','#0e0f10','#1a1b1d','#e9e6df']];
+const LOOK_THEME={paper:'#efe8da',mist:'#e7ecf1',sage:'#e6ebe2',dawn:'#f1e7dc',slate:'#24272b',night:'#0e0f10'};
+function currentLook(){ const v=lsGet('p27:ui:look','paper'); return LOOK_THEME[v]?v:'paper'; }
+function applyLook(){ const k=currentLook(); if(k==='paper') delete document.documentElement.dataset.look; else document.documentElement.dataset.look=k; const m=document.querySelector('meta[name="theme-color"]'); if(m) m.setAttribute('content', LOOK_THEME[k]); }
+function lookName(){ const k=currentLook(); return (LOOKS.find(l=>l[0]===k)||LOOKS[0])[1]; }
+function lookSwatchesHTML(){ const cur=currentLook(); return `<div class="looks" role="group" aria-label="Look">${LOOKS.map(l=>`<button class="lookbtn ${cur===l[0]?'on':''}" data-act="setlook" data-look="${l[0]}" aria-pressed="${cur===l[0]}"><span class="sw" style="background:${l[2]}"><i style="background:${l[3]};border-color:${l[4]}22"></i><b style="background:${l[4]}"></b></span><span class="nm">${l[1]}</span></button>`).join('')}</div>`; }
+function looksCardHTML(){ return `<div class="card" id="sec-look"><details class="fold" id="lookfold" ${ui.lookOpen?'open':''}><summary data-act="looktoggle">Look: <span class="lookname" style="margin-left:4px">${lookName()}</span></summary>${lookSwatchesHTML()}<p class="note" style="margin:8px 0 0">Changes this device only.</p>${photoRowHTML()}</details></div>`; }
+/* one tap applies; nothing is re-drawn (only colour tokens change), so typed text and scroll stay put */
+function setLook(k){ if(!LOOK_THEME[k]) return; lsSet('p27:ui:look', k==='paper'?null:k); applyLook(); try{ photoApply(); const pn=document.getElementById('photonote'); if(pn) pn.textContent=photoNote(); }catch(e){} const nm=lookName();
+  document.querySelectorAll('.lookbtn').forEach(b=>{ const on=b.dataset.look===k; b.classList.toggle('on',on); b.setAttribute('aria-pressed',String(on)); });
+  document.querySelectorAll('.lookname').forEach(e=>{ e.textContent=nm; }); }
+function openLookSheet(){
+  openDialog(`<h3>Look</h3>${lookSwatchesHTML()}<p class="note" style="margin:8px 0 0">Changes this device only.</p><div class="acts"><button class="save" data-x="done">Done</button></div>`,'looksheet');
+  dlg.querySelector('[data-x=done]').addEventListener('click', closeDialog);
+  dlg.querySelector('.looks').addEventListener('click', e=>{ const b=e.target.closest('.lookbtn'); if(!b) return; e.stopPropagation(); setLook(b.dataset.look); }); }
+
+/* ---------- Gym tick: the old planner's own record (gym[date]=true; untick removes the date) ---------- */
+function gymToggle(gd){ if(!gd) return; DB.gym=DB.gym||{}; const was=!!DB.gym[gd]; if(was) delete DB.gym[gd]; else DB.gym[gd]=true; saveDB(); rerenderInPlace();
+  flashUndo(was?'Gym tick removed':'Gym ticked', ()=>{ DB.gym=DB.gym||{}; if(was) DB.gym[gd]=true; else delete DB.gym[gd]; saveDB(); rerenderInPlace(); }, {label:was?'gym tick removed':'gym tick'}); }
+function gymTodayHTML(){ const on=!!(DB.gym&&DB.gym[todayISO]); return `<button class="gymtick ${on?'on':''}" id="gymtoday" data-act="gym" data-date="${todayISO}" aria-pressed="${on}"><span class="check ${on?'done':''}" aria-hidden="true">${CHK}</span><span>Gym</span></button>`; }
+function gymTrackHTML(){ const g=DB.gym||{}; const went=[]; for(let i=0;i<7;i++){ if(g[addDays(todayMonday,i)]) went.push(DOW[i]); }
+  let weeks='', any=false; for(let w=7;w>=0;w--){ const mk=addDays(todayMonday,-7*w); let dots=''; for(let i=0;i<7;i++){ const iso=addDays(mk,i); if(g[iso]){ dots+=`<i data-d="${iso}" title="${DOW[i]} ${dmon(iso)}"></i>`; any=true; } } weeks+=`<span class="gw" data-wk="${mk}">${dots}</span>`; }
+  return (went.length?`<div class="gymweek" id="gymweek">Gym this week: ${went.join(' · ')}</div>`:'')+(any?`<div class="gymdots" id="gymdots" role="img" aria-label="Gym days in the last 8 weeks, newest on the right">${weeks}</div>`:''); }
+function faceAct3(act, a){
+  if(act==='jobrefresh'){ openJobRefresh(null); return true; }
+  if(act==='setlook'){ setLook(a.dataset.look); return true; }
+  if(act==='looktoggle'){ ui.lookOpen=!ui.lookOpen; return true; }
+  if(faceAct4(act,a)) return true;
+  return false;
+}
+
+/* ---------- Photo background: this device only (IndexedDB "p27-ui"), never localStorage, never the task store ----------
+   Two modes: 'soft' (behind everything, blurred, veiled with the look's background) and 'band' (top strip only).
+   Readability is enforced: the veil is strengthened until every text colour that can sit on the bare page passes 4.5:1
+   against the darkest and the lightest parts of the photo. Columns and cards stay solid in both modes. */
+let _photo=null, _photoURL=null, _photoSession=false, _photoErr='', _photoVeil=0, _photoWhy='';
+function pdb(){ return new Promise((res,rej)=>{ try{ const r=indexedDB.open('p27-ui',1); r.onupgradeneeded=()=>{ try{ r.result.createObjectStore('kv'); }catch(e){} }; r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error||new Error('idb')); r.onblocked=()=>rej(new Error('idb')); }catch(e){ rej(e); } }); }
+async function pdbGet(k){ const db=await pdb(); return new Promise((res,rej)=>{ try{ const q=db.transaction('kv').objectStore('kv').get(k); q.onsuccess=()=>{ const v=q.result; db.close(); res(v); }; q.onerror=()=>{ db.close(); rej(q.error); }; }catch(e){ try{ db.close(); }catch(_){} rej(e); } }); }
+async function pdbSet(k,v){ const db=await pdb(); return new Promise((res,rej)=>{ try{ const tx=db.transaction('kv','readwrite'); if(v==null) tx.objectStore('kv').delete(k); else tx.objectStore('kv').put(v,k); tx.oncomplete=()=>{ db.close(); res(true); }; tx.onerror=tx.onabort=()=>{ db.close(); rej(tx.error||new Error('idb')); }; }catch(e){ try{ db.close(); }catch(_){} rej(e); } }); }
+const PHOTO_MAX_BYTES=350*1024, PHOTO_MAX_SIDE=1600;
+async function shrinkPhoto(file){
+  if(!file || !/^image\//.test(file.type||'')) throw new Error('notimage');
+  let src=null; try{ src=await createImageBitmap(file); }catch(e){ src=null; }
+  if(!src){ src=await new Promise((res,rej)=>{ const u=URL.createObjectURL(file); const im=new Image(); im.onload=()=>{ URL.revokeObjectURL(u); res(im); }; im.onerror=()=>{ URL.revokeObjectURL(u); rej(new Error('decode')); }; im.src=u; }); }
+  const W=src.width||src.naturalWidth, H=src.height||src.naturalHeight; if(!W||!H) throw new Error('decode');
+  let side=PHOTO_MAX_SIDE, q=0.72, blob=null, w=0, h=0, c=null;
+  for(let i=0;i<14;i++){ const k=Math.min(1, side/Math.max(W,H)); w=Math.max(1,Math.round(W*k)); h=Math.max(1,Math.round(H*k)); c=document.createElement('canvas'); c.width=w; c.height=h; c.getContext('2d').drawImage(src,0,0,w,h);
+    blob=await new Promise(r=>c.toBlob(r,'image/jpeg',q)); if(!blob) throw new Error('decode'); if(blob.size<=PHOTO_MAX_BYTES) break; if(q>0.5) q=+(q-0.08).toFixed(2); else side=Math.round(side*0.82); }
+  if(blob.size>PHOTO_MAX_BYTES) throw new Error('toobig');
+  /* the darkest and the lightest 4% of the picture, from a small copy: what text has to survive */
+  const s=document.createElement('canvas'); s.width=48; s.height=48; const sx=s.getContext('2d'); sx.drawImage(c,0,0,48,48); const d=sx.getImageData(0,0,48,48).data; const px=[]; for(let i=0;i<d.length;i+=4) px.push([d[i],d[i+1],d[i+2]]);
+  px.sort((a,b)=>relLum(a)-relLum(b)); const n=Math.max(1,Math.round(px.length*0.04)); const mean=a=>[0,1,2].map(j=>Math.round(a.reduce((t,p)=>t+p[j],0)/a.length));
+  try{ if(src.close) src.close(); }catch(e){}
+  return { buf:await blob.arrayBuffer(), type:'image/jpeg', w, h, bytes:blob.size, stats:{ dark:mean(px.slice(0,n)), light:mean(px.slice(-n)) }, at:Date.now() };
+}
+function relLum(c){ const f=v=>{ v/=255; return v<=.03928?v/12.92:Math.pow((v+.055)/1.055,2.4); }; return .2126*f(c[0])+.7152*f(c[1])+.0722*f(c[2]); }
+function crat(a,b){ const x=relLum(a), y=relLum(b); return (Math.max(x,y)+.05)/(Math.min(x,y)+.05); }
+function tokenRGB(name){ const p=document.createElement('span'); p.style.cssText='position:absolute;visibility:hidden;color:var('+name+')'; document.body.appendChild(p); const m=getComputedStyle(p).color.match(/[\d.]+/g); p.remove(); return m?m.slice(0,3).map(Number):[0,0,0]; }
+/* With a photo, words on the bare page use the two strong inks only (the weaker and coloured inks are kept, under a "-0"
+   name, for solid cards, columns and bars, which the stylesheet hands back to them). So the veil has two colours to protect. */
+const PHOTO_TEXT_TOKENS=['--ink','--ink-2'];
+const PHOTO_WEAK=['--muted','--faint','--done','--p-ink','--w-ink','--good-ink','--gold-ink','--late-ink'];
+function photoInks(on){ const root=document.documentElement; PHOTO_WEAK.forEach(n=>{ root.style.removeProperty(n); root.style.removeProperty(n+'-0'); }); if(!on) return;
+  /* read the look's own inks with the photo mark off, so no photo rule is in the way */
+  const mark=root.dataset.photo; delete root.dataset.photo; const cs=getComputedStyle(root); const own=PHOTO_WEAK.map(n=>cs.getPropertyValue(n).trim()); if(mark) root.dataset.photo=mark; PHOTO_WEAK.forEach((n,i)=>{ if(own[i]){ root.style.setProperty(n+'-0', own[i]); root.style.setProperty(n,'var(--ink-2)'); } }); }
+function photoVeilFor(start){ if(!_photo||!_photo.stats) return 1; const bg=tokenRGB('--bg'); const texts=PHOTO_TEXT_TOKENS.map(tokenRGB).filter(t=>crat(t,bg)>=4.6);
+  const need=px=>{ let a=start; while(a<1){ const comp=bg.map((v,i)=>v*a+px[i]*(1-a)); if(texts.every(t=>crat(t,comp)>=4.6)) break; a=+(a+0.02).toFixed(2); } return Math.min(1,a); };
+  const aD=need(_photo.stats.dark), aL=need(_photo.stats.light); _photoWhy=(relLum(_photo.stats.light)-relLum(_photo.stats.dark)>0.45)?'both':(relLum(bg)>0.3?'dark':'light');
+  return Math.max(aD,aL); }
+function photoMode(){ const m=_photo&&_photo.mode; return (m==='soft'||m==='band')?m:(isLap()?'soft':'band'); }
+function photoApply(){
+  let el=document.getElementById('photobg');
+  if(!_photo){ if(el) el.remove(); if(_photoURL){ try{ URL.revokeObjectURL(_photoURL); }catch(e){} _photoURL=null; } delete document.documentElement.dataset.photo; _photoVeil=0; photoInks(false); return; }
+  if(!_photoURL) _photoURL=URL.createObjectURL(new Blob([_photo.buf],{type:_photo.type||'image/jpeg'}));
+  if(!el){ el=document.createElement('div'); el.id='photobg'; el.setAttribute('aria-hidden','true'); el.innerHTML='<i></i>'; document.body.insertBefore(el, document.body.firstChild); }
+  el.firstChild.style.backgroundImage='url("'+_photoURL+'")'; const mode=photoMode(); document.documentElement.dataset.photo=mode; photoInks(true);
+  _photoVeil=photoVeilFor(mode==='band'?0.3:0.78); el.style.setProperty('--pv', String(_photoVeil));
+}
+async function photoBoot(){ try{ const r=await pdbGet('photo'); if(r&&r.buf&&r.stats) _photo=r; }catch(e){ _photoSession=true; } if(_photo){ photoApply(); if(ui.view==='more') renderMore(); } }
+async function photoStore(){ try{ await pdbSet('photo', _photo); _photoSession=false; }catch(e){ _photoSession=!!_photo; } }
+function photoRedraw(){ if(_photoURL){ try{ URL.revokeObjectURL(_photoURL); }catch(e){} _photoURL=null; } photoApply(); if(ui.view==='more'){ ui.lookOpen=true; renderMore(); } }
+/* add, replace and remove all go through here, and each can be undone; the task store is never touched */
+function photoSet(rec, msg){ const prev=_photo; _photo=rec; _photoErr=''; photoRedraw(); photoStore();
+  flashUndo(msg, ()=>{ _photo=prev; photoRedraw(); photoStore(); }, {label:msg.toLowerCase()}); }
+async function photoChosen(file){ if(!file) return; let rec=null;
+  try{ rec=await shrinkPhoto(file); }catch(e){ _photoErr=(e&&e.message==='toobig')?'That picture could not be made small enough. Nothing has changed.':'That file is not a picture this browser can open. Nothing has changed.'; if(ui.view==='more'){ ui.lookOpen=true; renderMore(); } return; }
+  if(_photo&&_photo.mode) rec.mode=_photo.mode; photoSet(rec, _photo?'Photo changed':'Photo added'); }
+function photoSetMode(m){ if(!_photo||(m!=='soft'&&m!=='band')) return; _photo=Object.assign({}, _photo, {mode:m}); photoApply(); photoStore(); if(ui.view==='more'){ ui.lookOpen=true; renderMore(); } }
+function photoNote(){ if(_photoErr) return _photoErr; if(!_photo) return 'A photo stays on this device. It is made smaller first and the original is not kept.';
+  const start=photoMode()==='band'?0.3:0.78; let s=_photoSession?'This browser cannot keep the photo, so it lasts until you close this page.':'Kept on this device only.';
+  if(_photoVeil>=0.97) s+=(_photoWhy==='both'?' This photo has very dark and very light parts, so it cannot show without making words hard to read. Try another photo.':_photoWhy==='dark'?' This photo is too dark to show with this look without making words hard to read. Try Slate or Night, or a lighter photo.':' This photo is too light to show with this look without making words hard to read. Try Paper, Mist, Sage or Dawn, or a darker photo.');
+  else if(_photoVeil>start+0.05) s+=' Shown faintly so the words stay readable with this look.'; return s; }
+function photoRowHTML(){ const has=!!_photo, m=photoMode();
+  return `<div id="photorow"><div class="eyebrow" style="margin-top:16px">Photo<span class="ln"></span></div>
+    <div class="photoacts"><button class="hb" data-act="photochoose">Choose a photo…</button>${has?`<button class="hb" data-act="photoremove">Remove photo</button>`:''}<input type="file" id="photo-file" accept="image/*" hidden></div>
+    ${has?`<div class="photomodes" role="radiogroup" aria-label="Where the photo shows">${[['soft','Soft behind everything'],['band','Band at the top']].map(x=>`<button class="hb ${m===x[0]?'on':''}" role="radio" aria-checked="${m===x[0]}" data-act="photomode" data-mode="${x[0]}">${x[1]}</button>`).join('')}</div>`:''}
+    <p class="note" id="photonote" style="margin:8px 0 0">${esc(photoNote())}</p></div>`; }
+document.addEventListener('change', e=>{ const t=e.target; if(t&&t.id==='photo-file'){ const f=t.files&&t.files[0]; t.value=''; photoChosen(f); } });
+function faceAct4(act, a){
+  if(act==='photochoose'){ const f=document.getElementById('photo-file'); if(f) f.click(); return true; }
+  if(act==='photoremove'){ if(_photo) photoSet(null,'Photo removed'); return true; }
+  if(act==='photomode'){ photoSetMode(a.dataset.mode); return true; }
+  return false;
+}
+function photoState(){ return { has:!!_photo, mode:_photo?photoMode():null, bytes:_photo?_photo.bytes:0, w:_photo?_photo.w:0, h:_photo?_photo.h:0, veil:_photoVeil, why:_photoWhy, note:photoNote(), session:_photoSession, stats:_photo?_photo.stats:null }; }
 
 
 /* ---------- boot ---------- */
@@ -4652,7 +4906,7 @@ setInterval(checkReminders, 60000);
 
 /* 2.7: test/diagnostic handle. Read-mostly; nothing here runs on its own. */
 window.__p27 = { get DB(){ return DB; }, buildImport, toCanonical, fromCanonical, storeCounts, parseWhen, applyImport, undoImport, earlierCopies, p27Usage, replayOnto, saveDB, exportShape, putBack, findTaskById, allIdSet, ruleId, odWrite, odDelete, odNameOk, readLiveStoreReadOnly, persistState, odState, syncLabel };
-Object.assign(window.__p27, { countTasksIn, datedCount, ui, addFromText, parseAddLine, computeFit, planFor, fitDay, parseRange, timeTasks, runUndo, boardCols, openSortOne, render });
+Object.assign(window.__p27, { jobsFromRows, rowsFromPaste, rowsFromDocx, normJobNo, applyLook, setLook, openLookSheet, gymToggle, photoState, photoSetMode, photoChosen, exportObj, countTasksIn, datedCount, ui, addFromText, parseAddLine, computeFit, planFor, fitDay, parseRange, timeTasks, runUndo, boardCols, openSortOne, render });
 // Register the service worker (offline-first). Harmless if unsupported.
 /* 2.7 (review item 7): the live planner's service worker deletes every cache not named planner-v1 when it
    activates, so this copy's shell cache can vanish. On each online open, re-add it if it is missing. */

@@ -1,11 +1,11 @@
 {
-  "name": "Planner 2.7 copy",
-  "short_name": "Planner 27",
+  "name": "Planner 2.7",
+  "short_name": "Planner 2.7",
   "description": "Tom's weekly planner — tasks, week view, projects and review.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "orientation": "portrait",
+  "orientation": "any",
   "background_color": "#efe8da",
   "theme_color": "#f1ebdf",
   "icons": [
