@@ -1304,11 +1304,12 @@ function plannerIndexById(db){
   return m;
 }
 function diffPlanner(local, remote){
-  const A=plannerIndexById(local), B=plannerIndexById(remote);
-  let moved=0,renamed=0,ticked=0,onlyLocal=0,onlyCloud=0;
-  A.forEach((v,id)=>{ const w=B.get(id); if(!w){ onlyLocal++; return; } if(w.loc!==v.loc) moved++; if(w.label!==v.label) renamed++; if(w.done!==v.done) ticked++; });
+  const IA=plannerIndexDeep(local), IB=plannerIndexDeep(remote), A=IA.m, B=IB.m;
+  let moved=0,renamed=0,ticked=0,onlyLocal=0,onlyCloud=0,edited=0;
+  A.forEach((v,id)=>{ const w=B.get(id); if(!w){ onlyLocal++; return; } if(w.loc!==v.loc) moved++; if(w.label!==v.label) renamed++; if(w.done!==v.done) ticked++; if(w.c!==v.c) edited++; });
   B.forEach((v,id)=>{ if(!A.has(id)) onlyCloud++; });
-  return {moved,renamed,ticked,onlyLocal,onlyCloud, any:moved+renamed+ticked+onlyLocal+onlyCloud>0};
+  let reordered=0, other=[]; try{ reordered=diffOrder(IA,IB); }catch(e){ reordered=1; } try{ other=diffSections(local, remote); }catch(e){ other=['unknown']; }
+  return {moved,renamed,ticked,onlyLocal,onlyCloud,edited,reordered,other, any:moved+renamed+ticked+onlyLocal+onlyCloud+edited+reordered+other.length>0};
 }
 /* ===================== v2.1 — FAULT 2 sync hardening =====================
    FAULT 2: a stale device silently overwrote the cloud with no user action.
@@ -1336,7 +1337,7 @@ function decidePushConflict(baseRev, remote, diff){
   const bRev = Number.isInteger(baseRev) ? baseRev : null;
   if(rRev!=null && bRev!=null && rRev<=bRev) return 'takeover';   // cloud NOT ahead of our base — 412 is a stale etag, re-push with the FRESH etag
   if(diff && !diff.any) return 'adopt';                            // identical content — take cloud, lose nothing
-  if(diff && diff.onlyLocal===0 && diff.moved===0 && diff.renamed===0 && diff.ticked===0) return 'adopt'; // cloud is a superset of us — adopting loses nothing
+  if(diff && diff.onlyLocal===0 && diff.moved===0 && diff.renamed===0 && diff.ticked===0 && diffNothingHidden(diff)) return 'adopt'; // cloud is a superset of us — adopting loses nothing
   return 'reconcile';                                              // genuine divergence, or rev unknown — never overwrite silently
 }
 /* pull-side twin: may we silently adopt the remote? Only when it genuinely advanced past
@@ -1346,7 +1347,7 @@ function remoteIsSafelyNewer(baseRev, remote, diff){
   const bRev = Number.isInteger(baseRev) ? baseRev : null;
   if(rRev==null || bRev==null) return false;             // rev unknown → never silently adopt
   if(rRev<=bRev) return false;                            // cloud not ahead of our base
-  return !!(diff && diff.onlyLocal===0 && diff.moved===0 && diff.renamed===0 && diff.ticked===0);
+  return !!(diff && diff.onlyLocal===0 && diff.moved===0 && diff.renamed===0 && diff.ticked===0 && diffNothingHidden(diff));
 }
 /* persist locally WITHOUT bumping savedAt/rev and WITHOUT scheduling a push. For unattended
    writes (Fitbit): the data is kept, this device never becomes "newest", never auto-pushes. */
@@ -1580,6 +1581,7 @@ async function openReconcile(){
   if(df.ticked) bits.push('<b>'+df.ticked+'</b> ticked differently');
   if(df.onlyLocal) bits.push('<b>'+df.onlyLocal+'</b> only on this device');
   if(df.onlyCloud) bits.push('<b>'+df.onlyCloud+'</b> only in the cloud');
+  diffExtraBits(df).forEach(b=>bits.push(b));
   const diffLine = bits.length ? 'Differences: '+bits.join(' · ')+'.' : 'The two copies look identical in content.';
   _dlgGen++;   /* v2.4 (panel: stress seat): this writes the dialog directly, so it must take the
                   identity with it — otherwise a Claude reply still in flight draws its proposal
@@ -4943,6 +4945,86 @@ function faceAct4(act, a){
 }
 function photoState(){ return { has:!!_photo, mode:_photo?photoMode():null, bytes:_photo?_photo.bytes:0, w:_photo?_photo.w:0, h:_photo?_photo.h:0, veil:_photoVeil, why:_photoWhy, note:photoNote(), session:_photoSession, stats:_photo?_photo.stats:null }; }
 
+/* =====================================================================================================
+   The sync arbiter sees every kind of change (20 Nov, third fix pass). No merging is done here.
+   Before this, two copies were compared by each task's place, words and tick only, so a device with unpushed
+   changes could take the OneDrive copy "because nothing differs" and silently drop a new step, a reminder,
+   a time, a note, a project, a Gym tick, a repeating task or a day's work time. diffPlanner() now also counts
+     edited    : tasks on both sides whose remaining content differs (canonical form, see taskCanon)
+     reordered : lists whose shared tasks are in a different order
+     other     : the sections outside the weeks that adoptRemote() overwrites wholesale and that differ
+   and a silent adopt needs all three to be nothing. The SAFE HALF (a device with nothing unsynced) is untouched.
+   ===================================================================================================== */
+/* left out of the task comparison, and why:
+   id, label, done        compared separately (which task it is, renamed, ticked)
+   job                    carried across an adopt by the device note p27:od:mine (face5.js)
+   doneAt, doneOn         stamped by the page at the moment of a tick; the tick itself is compared
+   defers, hist           the count and trail of moves, stamped by the page when a task is moved; the place itself is compared
+   rid, occ               stamped by the page on load (backfillRecur) by matching a task's words to a repeat rule
+   open                   whether a task's steps are shown unfolded: view state the page keeps on the task; migrate fills it in
+   and on a step: id (given by the page; a step stored as plain words gets a new one on every load), doneAt, doneOn */
+const DIFF_SKIP_TASK={ id:1, label:1, done:1, job:1, doneAt:1, doneOn:1, defers:1, hist:1, rid:1, occ:1, open:1 };
+const DIFF_SKIP_STEP={ id:1, doneAt:1, doneOn:1 };
+/* canonical form: key order ignored; undefined, null, '', [] and {} are "absent"; so are false and 0, which are what
+   migrate() writes into a field that was missing (private:false, defers:0) and mean the same as missing */
+function canonVal(v){
+  if(v===undefined||v===null||v===''||v===false||v===0) return undefined;
+  if(Array.isArray(v)){ if(!v.length) return undefined; return v.map(x=>{ const c=canonVal(x); return c===undefined?null:c; }); }
+  if(typeof v==='object'){ const o={}; let n=0; Object.keys(v).sort().forEach(k=>{ const c=canonVal(v[k]); if(c!==undefined){ o[k]=c; n++; } }); return n?o:undefined; }
+  return v;
+}
+function canonText(v){ const c=canonVal(v); return c===undefined?'':JSON.stringify(c); }
+function taskCanon(t){
+  try{ const o={}; Object.keys(t).forEach(k=>{ if(!DIFF_SKIP_TASK[k] && k!=='subs') o[k]=t[k]; });
+    const subs=(Array.isArray(t.subs)?t.subs:[]).map(s=>{ if(typeof s==='string') return {label:s}; if(!s||typeof s!=='object') return null; const x={}; Object.keys(s).forEach(k=>{ if(!DIFF_SKIP_STEP[k]) x[k]=s[k]; }); return x; });
+    if(subs.length) o.subs=subs; return canonText(o);
+  }catch(e){ return '?'+Math.random(); }      // cannot compare: count it as different, never as the same
+}
+/* every task by id with its place, words, tick and canonical rest; also each list's order. Reads a week stored as a bare
+   array of days (the June shape; entries past the seventh are Unscheduled, as migrate() makes them) and skips null days. */
+function plannerIndexDeep(db){
+  const m=new Map(), lists=new Map();
+  const put=(t,loc)=>{ if(!t||typeof t!=='object'||t.id==null) return; m.set(t.id,{loc,label:t.label,done:!!t.done,c:taskCanon(t)}); if(!lists.has(loc)) lists.set(loc,[]); lists.get(loc).push(t.id); };
+  Object.entries((db&&db.weeks)||{}).forEach(([wkey,wk])=>{ if(!wk||typeof wk!=='object') return;
+    if(Array.isArray(wk)){ ['personal','work'].forEach(k=>{ wk.forEach((d,i)=>{ if(d&&typeof d==='object'&&Array.isArray(d[k])) d[k].forEach(t=>put(t, wkey+'/'+(i<7?i:'future')+'/'+k)); }); }); return; }
+    ['personal','work'].forEach(k=>{
+      (Array.isArray(wk.days)?wk.days:[]).forEach((d,i)=>{ if(i<7 && d && typeof d==='object' && Array.isArray(d[k])) d[k].forEach(t=>put(t, wkey+'/'+i+'/'+k)); });
+      ['future','weekend'].forEach(sec=>{ const arr=wk[sec]&&wk[sec][k]; if(Array.isArray(arr)) arr.forEach(t=>put(t, wkey+'/'+sec+'/'+k)); }); }); });
+  return {m, lists};
+}
+/* lists whose shared tasks (same task, same list on both sides) sit in a different order */
+function diffOrder(A, B){ let n=0; const seen=new Set();
+  const seq=(X,Y,loc)=>(X.lists.get(loc)||[]).filter(id=>{ const y=Y.m.get(id), x=X.m.get(id); return y&&x&&y.loc===loc&&x.loc===loc; }).join('\u0001');
+  [A,B].forEach(S=>S.lists.forEach((v,loc)=>{ if(seen.has(loc)) return; seen.add(loc); if(seq(A,B,loc)!==seq(B,A,loc)) n++; }));
+  return n; }
+/* what else each day holds besides its tasks (old stores kept calendar entries there); dow, n and month are filled in by migrate() */
+function daysCanon(db){ const o={};
+  Object.entries((db&&db.weeks)||{}).forEach(([wkey,wk])=>{ if(!wk||typeof wk!=='object') return; const days=(Array.isArray(wk)?wk:(Array.isArray(wk.days)?wk.days:[])).slice(0,7);
+    days.forEach((d,i)=>{ if(!d||typeof d!=='object') return; const x={}; Object.keys(d).forEach(k=>{ if(k!=='personal'&&k!=='work'&&k!=='dow'&&k!=='n'&&k!=='month') x[k]=d[k]; }); const c=canonVal(x); if(c!==undefined) o[wkey+'/'+i]=c; }); });
+  return canonText(o); }
+/* The sections adoptRemote() replaces wholesale: recur, projects and gym always (migrate gives the cloud copy all three);
+   dayShapes, dayPlans, imports and bin when the cloud copy has that key; and whatever else the days hold. Those four are
+   compared even when the cloud copy has no such key: adoptRemote() would then leave this device's alone, but nothing would
+   send it to OneDrive either (the device would count as up to date), and a later silent adopt could replace it unseen.
+   Not here: inbox, shopping and health (adoptRemote merges those); jobList (carried by the device note); schema (a format
+   marker written by the page, not by him). The Bin is compared by which tasks are in it, leaving out the ones older than
+   60 days that the next save throws away anyway. */
+function diffSections(local, remote){ const out=[], L=local||{}, R=remote||{};
+  ['recur','projects','gym'].forEach(k=>{ if(canonText(L[k])!==canonText(R[k])) out.push(k); });
+  ['dayShapes','dayPlans','imports'].forEach(k=>{ if(canonText(L[k])!==canonText(R[k])) out.push(k); });
+  { const cut=Date.now()-60*864e5; const ids=b=>(b&&typeof b==='object')?Object.keys(b).filter(k=>b[k]&&(+b[k].at>cut)).sort().join(','):''; if(ids(L.bin)!==ids(R.bin)) out.push('bin'); }
+  if(daysCanon(L)!==daysCanon(R)) out.push('days');
+  return out; }
+const DIFF_WORDS={ recur:'Repeating tasks differ', projects:'Projects differ', gym:'Gym ticks differ', dayShapes:'Saved work-time patterns differ', dayPlans:'Work times or plans for a day differ', imports:'The record of imports differs', bin:'The Bin differs', days:'Calendar entries kept on the days differ', unknown:'Something else differs' };
+/* the extra lines for the "both changed" sheet, in the style of the ones it already has */
+function diffExtraBits(df){ const bits=[]; if(!df) return bits;
+  if(df.edited) bits.push('<b>'+df.edited+'</b> task'+(df.edited!==1?'s have':' has')+' different steps, reminders, times or notes');
+  if(df.reordered) bits.push('<b>'+df.reordered+'</b> list'+(df.reordered!==1?'s are':' is')+' in a different order');
+  (df.other||[]).forEach(k=>bits.push(DIFF_WORDS[k]||DIFF_WORDS.unknown));
+  return bits; }
+/* true when nothing the old comparison could not see differs: the extra condition for any silent adopt by a device with unsynced changes */
+function diffNothingHidden(df){ return !!df && !df.edited && !df.reordered && !(df.other&&df.other.length); }
+
 
 /* ---------- boot ---------- */
 DB=loadDB();
@@ -4963,7 +5045,7 @@ setInterval(checkReminders, 60000);
 
 /* 2.7: test/diagnostic handle. Read-mostly; nothing here runs on its own. */
 window.__p27 = { get DB(){ return DB; }, buildImport, toCanonical, fromCanonical, storeCounts, parseWhen, applyImport, undoImport, earlierCopies, p27Usage, replayOnto, saveDB, exportShape, putBack, findTaskById, allIdSet, ruleId, odWrite, odDelete, odNameOk, readLiveStoreReadOnly, persistState, odState, syncLabel };
-Object.assign(window.__p27, { jobsFromRows, rowsFromPaste, rowsFromDocx, normJobNo, isJobHeader, jobLike, jobOptions, applyLook, setLook, openLookSheet, gymToggle, photoState, photoSetMode, photoChosen, exportObj, countTasksIn, datedCount, ui, addFromText, parseAddLine, computeFit, planFor, fitDay, parseRange, timeTasks, runUndo, boardCols, openSortOne, render });
+Object.assign(window.__p27, { jobsFromRows, rowsFromPaste, rowsFromDocx, normJobNo, isJobHeader, jobLike, jobOptions, diffPlanner, decidePushConflict, remoteIsSafelyNewer, migrate, saveDB, ensurePlan, db:()=>DB, applyLook, setLook, openLookSheet, gymToggle, photoState, photoSetMode, photoChosen, exportObj, countTasksIn, datedCount, ui, addFromText, parseAddLine, computeFit, planFor, fitDay, parseRange, timeTasks, runUndo, boardCols, openSortOne, render });
 // Register the service worker (offline-first). Harmless if unsupported.
 /* 2.7 (review item 7): the live planner's service worker deletes every cache not named planner-v1 when it
    activates, so this copy's shell cache can vanish. On each online open, re-add it if it is missing. */
