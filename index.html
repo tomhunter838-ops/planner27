@@ -567,11 +567,35 @@ body.hidedone :is(.weekgrid,.wp-scroll,.dayview) .t.done + .subs{display:none}
 /* ============================================================
    Weekly Planner — reengineered prototype
    Vanilla single-file. In-memory + localStorage (separate key,
-   NEVER touches the real planner-v2.json). Seeded with real data.
+   never touches the live planner's file — see the 2.7 boundary below).
    ============================================================ */
 
+/* 2.7: LIVE-PLANNER BOUNDARY ================================================
+   The live v2.4 planner shares this origin's localStorage. This block is the ONLY
+   place in the file that names its key prefix. (a) Every localStorage/sessionStorage
+   write or remove of a live key throws, whoever calls it; clear() is refused outright.
+   (b) readLiveStoreReadOnly() is the only code that reads the live store. */
+const __LIVE_PREFIX = 'wp:';
+(function(){
+  try{
+    const P=Storage.prototype, oSet=P.setItem, oRem=P.removeItem;
+    const isLive=k=>String(k).startsWith(__LIVE_PREFIX);
+    P.setItem=function(k,v){ if(isLive(k)) throw new Error('2.7 guard: refusing to write a live-planner key'); return oSet.call(this,k,v); };
+    P.removeItem=function(k){ if(isLive(k)) throw new Error('2.7 guard: refusing to remove a live-planner key'); return oRem.call(this,k); };
+    P.clear=function(){ throw new Error('2.7 guard: clear() refused — it would wipe the live planner'); };
+  }catch(e){}
+})();
+function readLiveStoreReadOnly(){ try{ return localStorage.getItem(__LIVE_PREFIX+'reeng:proto:v1'); }catch(e){ return null; } }
+/* 2.7: end of boundary ===================================================== */
 const STORE_KEY = 'p27:reeng:proto:v1';   // sandbox key — distinct from the live app's p27:concept:v2app
-let UID = 1; const uid = () => 't' + (UID++);
+let UID = 1;
+/* 2.7 (R10): new tasks and sub-tasks get random ids — k + base36(ms) + base36(4 random bytes) — so two
+   devices restored from the same copy can never mint the same id. Old t<n> ids are untouched; UID/_uid
+   and reseedUID() still run so a v2.4 build reading this store keeps working. */
+function newId(){ const a=new Uint8Array(4); crypto.getRandomValues(a); return 'k'+Date.now().toString(36)+((((a[0]<<24)>>>0)+(a[1]<<16)+(a[2]<<8)+a[3]).toString(36).padStart(7,'0')); }
+const uid = () => newId();
+/* 2.7: small deterministic string hash (FNV-1a 32-bit, base36) for derived ids */
+function fnv36(str){ let h=0x811c9dc5; for(let i=0;i<str.length;i++){ h^=str.charCodeAt(i); h=Math.imul(h,0x01000193)>>>0; } return h.toString(36); }
 
 /* ---------- helpers ---------- */
 const pad = n => String(n).padStart(2,'0');
@@ -586,7 +610,7 @@ function esc(s){ return (s==null?'':''+s).replace(/&/g,'&amp;').replace(/</g,'&l
 function tmin(hm){ const [h,m]=hm.split(':').map(Number); return h*60+m; }
 
 /* ---------- seed (real tasks, from your Excel via planner-seed.js) ---------- */
-function T(label, kind, opts={}){ return { id:uid(), label, kind, done:!!opts.done, time:opts.time||null, subs:(opts.subs||[]).map(s=>({id:uid(),label:s,done:false})), open:false, repeat:opts.repeat||null, defers:opts.defers||0, private:!!opts.private, projectId:opts.projectId||null, remind:opts.remind||null, claude:opts.claude||null, claudeLink:opts.claudeLink||null }; }
+function T(label, kind, opts={}){ return { id:uid(), createdAt:Date.now(), label, kind, done:!!opts.done, time:opts.time||null, subs:(opts.subs||[]).map(s=>({id:uid(),label:s,done:false})), open:false, repeat:opts.repeat||null, defers:opts.defers||0, private:!!opts.private, projectId:opts.projectId||null, remind:opts.remind||null, claude:opts.claude||null, claudeLink:opts.claudeLink||null }; }
 function day(y,m,d, personal, work){ const dt=new Date(y,m,d); return { personal, work, appts:[], dow:DOW[(dt.getDay()+6)%7], n:d, month:MON[m] }; }
 function emptyWeekDays(iso){ const [y,m,d]=iso.split('-').map(Number); return Array.from({length:7},(_,i)=>{ const dt=new Date(y,m-1,d+i); return { personal:[],work:[],appts:[], dow:DOW[i], n:dt.getDate(), month:MON[dt.getMonth()] }; }); }
 
@@ -632,9 +656,53 @@ function reseedUID(db){
   UID=Math.max(UID, mx+1);
 }
 function loadDB(){
-  try{ const raw=localStorage.getItem(STORE_KEY); if(raw){ const o=JSON.parse(raw); UID=(o._uid||1000); migrate(o); reseedUID(o); return o; } }catch(e){}
+  try{ const raw=localStorage.getItem(STORE_KEY); if(raw){ const o=JSON.parse(raw); UID=(o._uid||1000); migrate(o); reseedUID(o); _memBaseText=raw; return o; } }catch(e){}
   return buildSeed();
 }
+/* 2.7 (3.6) MULTI-TAB. _memBaseText = the exact store text this tab last loaded or wrote. If the stored text
+   differs at save time, another tab (or window) wrote in between: this tab's changes since its base are
+   replayed onto the stored copy, task by task, instead of overwriting it. Other tabs are told after every
+   write (BroadcastChannel + the storage event) and reload when they are not mid-edit. */
+let _memBaseText=null;
+const _bc = (typeof BroadcastChannel!=='undefined') ? new BroadcastChannel('p27-store') : null;
+function skelWeek(iso){ const [y,m,d]=iso.split('-').map(Number); return { key:iso, monday:[y,m-1,d], days:emptyWeekDays(iso), future:{personal:[],work:[]}, weekend:{personal:[],work:[]} }; }
+function taskIndex(db){ const m=new Map(); Object.entries(db.weeks||{}).forEach(([w,wk])=>{ if(!wk||!Array.isArray(wk.days)) return; ['personal','work'].forEach(k=>{ wk.days.forEach((d,i)=>((d&&d[k])||[]).forEach((t,j)=>t&&m.set(t.id,{w,di:i,k,j,t}))); [['future','F'],['weekend','W']].forEach(([z,zz])=>(((wk[z]||{})[k])||[]).forEach((t,j)=>t&&m.set(t.id,{w,di:zz,k,j,t}))); }); }); return m; }
+/* replay L's changes (relative to base B) onto S. Pure: returns a new object, B/L/S untouched. */
+function replayOnto(B, L, S){
+  const R=JSON.parse(JSON.stringify(S)); R.weeks=R.weeks||{};
+  const iB=taskIndex(B), iL=taskIndex(L), iR=taskIndex(R);
+  const removeFromR=id=>{ const x=iR.get(id); if(!x) return; const wk=R.weeks[x.w]; const arr=colArr(wk,x.di,x.k); const p=arr.findIndex(t=>t&&t.id===id); if(p>=0) arr.splice(p,1); iR.delete(id); };
+  const insertR=(x)=>{ if(!R.weeks[x.w]) R.weeks[x.w]=skelWeek(x.w); const arr=colArr(R.weeks[x.w],x.di,x.k); arr.splice(Math.min(x.j,arr.length),0,JSON.parse(JSON.stringify(x.t))); };
+  let changed=0;
+  iL.forEach((x,id)=>{ const b=iB.get(id);
+    if(!b){ if(!iR.has(id)){ insertR(x); changed++; } return; }                                   // added here
+    const same = b.w===x.w && b.di===x.di && b.k===x.k && JSON.stringify(b.t)===JSON.stringify(x.t);
+    if(!same){ removeFromR(id); insertR(x); changed++; } });                                      // edited or moved here
+  iB.forEach((b,id)=>{ if(!iL.has(id)){ removeFromR(id); changed++; } });                         // removed here (binned or merged away)
+  ['recur','inbox','projects','shopping','gym','health','dayShapes','dayPlans','imports','schema'].forEach(k=>{ if(JSON.stringify(L[k])!==JSON.stringify(B[k])) R[k]=L[k]; });
+  const bb=B.bin||{}, lb=L.bin||{}; R.bin=Object.assign({}, R.bin||{});
+  Object.keys(lb).forEach(k=>{ if(!bb[k]) R.bin[k]=lb[k]; }); Object.keys(bb).forEach(k=>{ if(!lb[k]) delete R.bin[k]; });
+  return { R, changed };
+}
+function reconcileWithStored(){
+  let st=null; try{ st=localStorage.getItem(STORE_KEY); }catch(e){ return false; }
+  if(st==null || _memBaseText==null || st===_memBaseText) return false;
+  let S, B; try{ S=JSON.parse(st); B=JSON.parse(_memBaseText); migrate(B); }catch(e){ return false; }   /* base migrated like memory, so load-time fills are not mistaken for edits */
+  const { R, changed }=replayOnto(B, DB, S);
+  migrate(R); reseedUID(R); DB=R; _memBaseText=st;
+  try{ odLog('tab-merge', { rev:S.rev, changed }); }catch(e){}
+  return true;
+}
+let _storeStale=false;
+function onStoreChangedElsewhere(){
+  let st=null; try{ st=localStorage.getItem(STORE_KEY); }catch(e){ return; }
+  if(st==null || st===_memBaseText) return;
+  if(dragging || (dlg && dlg.open)){ _storeStale=true; return; }       // mid-edit: saveDB will merge
+  try{ const o=JSON.parse(st); migrate(o); reseedUID(o); DB=o; _memBaseText=st; _storeStale=false; ui.claudeReads={}; render(); }catch(e){}
+}
+function onMetaChangedElsewhere(){ try{ const meta=JSON.parse(localStorage.getItem(OD.metaKey)||'null'); if(meta){ odState.live=!!meta.live; odState.etag=meta.etag||null; odState.baseRev=(Number.isInteger(meta.baseRev)?meta.baseRev:null); } }catch(e){} }
+if(_bc) _bc.onmessage=()=>{ onStoreChangedElsewhere(); onMetaChangedElsewhere(); };
+window.addEventListener('storage', e=>{ if(e.key===STORE_KEY) onStoreChangedElsewhere(); else if(e.key===OD.metaKey) onMetaChangedElsewhere(); });
 // additive migration: never removes/overwrites — only fills new optional fields on older data
 function migrate(db){
   if(!db.projects) db.projects=[];
@@ -676,8 +744,23 @@ function migrate(db){
   });
   if(!db.projects.length) installDefaultProjects(db);
   if(!Number.isInteger(db.rev)) db.rev = 1;   // v2.1: seed a revision on legacy data (no rev field)
+  try{ backfillRecur(db); }catch(e){}
 }
-function saveDB(){ try{ DB.savedAt=Date.now(); DB.rev=(Number.isInteger(DB.rev)?DB.rev:0)+1; DB._uid=UID; localStorage.setItem(STORE_KEY, JSON.stringify(DB)); }catch(e){} flashSaved(); scheduleSync(); }   // v2.1: rev bumps on every REAL (user-action) save
+/* 2.7: every write of the store goes through writeStore(). A failed write is never silent:
+   persistState.error drives the badge ("Not saved on this device") until a write succeeds.
+   Snapshots are expendable — on a quota failure the day snapshot is dropped once and the
+   main write retried, so a snapshot can never be the reason the store did not save. */
+const persistState = { error:null, lastOk:0 };
+function writeStore(text){
+  try{ localStorage.setItem(STORE_KEY, text); persistState.error=null; persistState.lastOk=Date.now(); _memBaseText=text; try{ _bc&&_bc.postMessage({rev:DB&&DB.rev}); }catch(e4){} return true; }
+  catch(e){
+    try{ if(localStorage.getItem('p27:snap:day')!=null){ localStorage.removeItem('p27:snap:day'); localStorage.setItem(STORE_KEY, text); persistState.error=null; persistState.lastOk=Date.now(); _memBaseText=text; return true; } }catch(e2){}
+    persistState.error='Not saved on this device';
+    try{ updateSyncBadge(); }catch(e3){}
+    return false;
+  }
+}
+function saveDB(){ try{ reconcileWithStored(); }catch(e){ console.error(e); } try{ pruneBin(); }catch(e){} DB.savedAt=Date.now(); DB.rev=(Number.isInteger(DB.rev)?DB.rev:0)+1; DB._uid=UID; writeStore(JSON.stringify(DB)); flashSaved(); scheduleSync(); }   // v2.1: rev bumps on every REAL (user-action) save
 
 /* v1.2 (E3): the date is recomputed, not frozen at load. A tab left open past
    midnight used to keep treating yesterday as today — wrong day highlighted, gym
@@ -725,6 +808,7 @@ function weekView(iso){
     const [y,m,d]=iso.split('-').map(Number);
     _shimWk={ key:iso, monday:[y,m-1,d], days:emptyWeekDays(iso), future:{personal:[],work:[]}, weekend:{personal:[],work:[]}, __shim:true };
     _shimKey=iso;
+    try{ applyRecurring(_shimWk); }catch(e){}   /* 2.7: preview only — never stored; the same ids are minted if he edits here */
   }
   return _shimWk;
 }
@@ -746,7 +830,28 @@ function daysBetween(a,b){ const [y1,m1,d1]=a.split('-').map(Number),[y2,m2,d2]=
    created a task. Both shapes are now accepted; stored data is not rewritten. */
 function recurLane(r){ const v=r.lane||r.kind; return (v==='work'||v==='personal')?v:null; }
 function recurDayIdx(r){ if(typeof r.day==='number'&&r.day>=0&&r.day<=6) return r.day; const i=DOW.indexOf(r.day); return i; }
-function applyRecurring(week){
+/* 2.7 (2.4): a rule's id is its own id, or r_<hash> of its defining fields (same on every device). */
+function ruleId(r){ if(r && r.id!=null && r.id!=='') return String(r.id); return 'r_'+fnv36([r.label,recurLane(r),r.day,r.type||'weekly',r.every||'',r.anchor||''].join('|')); }
+/* 2.7 (2.4): instance id t:<ruleId>:<date>, sub ids s:<instance>:<j> — two devices spawning the same
+   occurrence produce the same task. Spawn is skipped if that id exists anywhere in the store or the
+   Bin, or (for instances made before 2.7) if a binned task with that label came from that day. */
+function recurInstance(r, lane, iso, repeat){
+  const rid=ruleId(r), id='t:'+rid+':'+iso;
+  const t=T(r.label, lane, {repeat}); t.id=id; t.rid=rid; t.occ=iso;
+  t.subs=(r.subs||[]).map((x,j)=>({ id:'s:'+id+':'+j, label:(typeof x==='string'?x:((x&&x.label)||'')), done:false }));
+  return t;
+}
+let _binPL=null;
+function applyRecurring(week, ids){
+  ids = ids || allIdSet(); const bpl=_binPL||binPlaceLabels();
+  const spawn=(r, lane, di, iso, repeat)=>{
+    const arr=week.days[di][lane]; if(!arr) return;
+    const id='t:'+ruleId(r)+':'+iso;
+    if(ids.has(id)) return;                                            // already exists somewhere, or binned
+    if(arr.some(t=>t.label===r.label)) return;                         // v2.4 label check kept
+    if(bpl.has(place(week.key,di,lane)+'|'+r.label)) return;           // a pre-2.7 instance deleted from this day
+    arr.push(recurInstance(r, lane, iso, repeat)); ids.add(id);
+  };
   (DB.recur||[]).forEach(r=>{
     const lane=recurLane(r); if(!lane) return;
     if(r.type==='interval'){
@@ -757,22 +862,42 @@ function applyRecurring(week){
         if(iso<anchor) continue;
         if(iso<todayISO) continue;                 // never materialise instances on days already gone
         if(daysBetween(anchor,iso)%every!==0) continue;
-        const arr=week.days[i][lane]; if(!arr) continue;
-        if(!arr.some(t=>t.label===r.label)) arr.push(T(r.label, lane, {subs:(r.subs||[]).slice(), repeat:'every '+every+'d'}));
+        spawn(r, lane, i, iso, 'every '+every+'d');
       }
       return;
     }
     const di = recurDayIdx(r); if(di<0) return;
     if(addDays(week.key,di)<todayISO) return;      // never materialise instances on days already gone
-    const arr = week.days[di][lane]; if(!arr) return;
-    if(!arr.some(t=>t.label===r.label)) arr.push(T(r.label, lane, {subs:(r.subs||[]).slice(), repeat:'weekly'}));
+    spawn(r, lane, di, addDays(week.key,di), 'weekly');
   });
 }
 // re-apply recurring rules to every already-created week from startKey forward (idempotent — label-match dedupe)
 function applyRecurringFrom(startKey){
-  Object.keys(DB.weeks).filter(k=>k>=startKey).forEach(k=>{ const wk=DB.weeks[k]; if(wk&&Array.isArray(wk.days)) applyRecurring(wk); });
+  const ids=allIdSet(); _binPL=binPlaceLabels();
+  try{ Object.keys(DB.weeks).filter(k=>k>=startKey).forEach(k=>{ const wk=DB.weeks[k]; if(wk&&Array.isArray(wk.days)) applyRecurring(wk, ids); }); } finally { _binPL=null; }
 }
 function colArr(week, dayIdx, kind){ return dayIdx==='F' ? week.future[kind] : dayIdx==='W' ? week.weekend[kind] : week.days[dayIdx][kind]; }
+/* 2.7: placement string <week>/<slot>/<lane>, slot d0..d6 | weekend | pool (canonical vocabulary) */
+function place(wkKey, di, kind){ return wkKey+'/'+(di==='F'?'pool':di==='W'?'weekend':'d'+di)+'/'+kind; }
+/* 2.7 (2.3): move history, newest last, capped at 4. Display/history only — never arbitrates.
+   defers is still incremented exactly where v2.4 does it, by the callers. */
+function noteMove(t, from, to, a){ if(!t || from===to) return; const h=Array.isArray(t.hist)?t.hist.slice():[]; h.push({a:a||'mv', from, to, at:Date.now()}); while(h.length>4) h.shift(); t.hist=h; }
+/* 2.7: every task id in the store, plus the Bin (used by recurring spawn and imports) */
+function allIdSet(db){ db=db||DB; const s=new Set(); const add=t=>{ if(!t) return; s.add(t.id); if(t.rid&&t.occ) s.add('t:'+t.rid+':'+t.occ); };
+  Object.values(db.weeks||{}).forEach(wk=>{ if(!wk) return; (wk.days||[]).forEach(d=>['personal','work'].forEach(k=>((d&&d[k])||[]).forEach(add))); ['future','weekend'].forEach(z=>['personal','work'].forEach(k=>(((wk[z]||{})[k])||[]).forEach(add))); });
+  Object.entries(db.bin||{}).forEach(([k,e])=>{ s.add(k); if(e&&e.task&&e.task.rid&&e.task.occ) s.add('t:'+e.task.rid+':'+e.task.occ); }); return s; }
+/* 2.7 (review item 4): instances spawned before 2.7 carry plain t<n> ids. At load (memory only — written with
+   the next real save) a task that sits on its rule's day, in its lane, with the rule's label, from today on,
+   is tagged rid/occ, so the deterministic spawner treats that occurrence as already made. */
+function backfillRecur(db){
+  const today=computeTodayISO();
+  (db.recur||[]).forEach(r=>{ const lane=recurLane(r); if(!lane) return; const rid=ruleId(r);
+    Object.entries(db.weeks||{}).forEach(([k,wk])=>{ if(!wk||!Array.isArray(wk.days)) return;
+      const tag=(di)=>{ const iso=addDays(k,di); if(iso<today) return; const arr=(wk.days[di]&&wk.days[di][lane])||[]; const t=arr.find(x=>x&&x.label===r.label&&!x.rid); if(t){ t.rid=rid; t.occ=iso; } };
+      if(r.type==='interval'){ const every=Math.max(1,+r.every||1); if(!/^\d{4}-\d{2}-\d{2}$/.test(r.anchor||'')) return; for(let i=0;i<7;i++){ const iso=addDays(k,i); if(iso>=r.anchor && daysBetween(r.anchor,iso)%every===0) tag(i); } }
+      else { const di=recurDayIdx(r); if(di>=0) tag(di); } }); });
+}
+function binPlaceLabels(){ const s=new Set(); Object.values(DB.bin||{}).forEach(e=>{ if(e&&e.task) s.add(e.from+'|'+e.task.label); }); return s; }
 
 function sortTimed(arr){
   return arr.map((t,i)=>[t,i]).sort((a,b)=>{
@@ -854,9 +979,13 @@ function renderChrome(){
          <span class="synced">${(function(){var q=syncLabel();return '<span class="d" style="background:'+q.dot+'"></span>'+q.txt;})()}</span>
          <button class="ghost" data-go="shopping">🛒 Shopping</button>
          <button class="ghost" data-act="backup">⬇ Backup</button>
-         <button class="ghost" data-act="excel">⬇ Excel</button>
        </div>`;
   } else lap.innerHTML='';
+  /* 2.7 (R5): the phone gets the same sync state — a small badge pinned top-right. */
+  let ph=document.getElementById('phsync');
+  if(!isLap()){ if(!ph){ ph=document.createElement('div'); ph.id='phsync'; ph.style.cssText='position:fixed;top:calc(env(safe-area-inset-top,0px) + 6px);right:8px;z-index:60;font-size:11px;font-weight:600;color:var(--ink-2,#6b6259);background:var(--card,#fff);border:1px solid var(--line,#e4dccd);border-radius:12px;padding:3px 8px;display:flex;align-items:center;gap:5px;cursor:pointer;max-width:60vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'; document.body.appendChild(ph); }
+    ph.className='synced'; const q=syncLabel(); ph.innerHTML='<span class="d" style="background:'+q.dot+'"></span>'+q.txt; }
+  else if(ph) ph.remove();
 }
 
 /* ----- task row (shared) ----- */
@@ -1235,12 +1364,12 @@ function renderMore(){
     <div class="eyebrow">Plan<span class="ln"></span></div>
     <div class="softrow"><button class="softbtn" data-go="projects"><div class="h">Projects</div><div class="s">Goals broken into days · Claude-run</div></button><button class="softbtn" data-go="reminders"><div class="h">Reminders</div><div class="s">Nudges for things that slip</div></button></div>
     <div class="softrow"><button class="softbtn" data-go="shopping" style="flex:1 1 100%;background:var(--p-wash);border-color:var(--p-line)"><div class="h">🛒 Shopping list</div><div class="s">Dictate or type — one running list</div></button></div>
-    <div class="eyebrow">Friday backup ritual<span class="ln"></span></div>
-    <div class="softrow">${row('⬇ Backup (JSON)','One-click full backup of all weeks','backup')}${row('⬇ Export to Excel','Styled week, like your spreadsheet','excel')}</div>
+    ${importBackupHTML()}
     <div class="softrow"><a class="softbtn" href="guide.html" style="flex:1 1 100%;text-decoration:none;display:block"><div class="h">📘 Guide & commissioning record</div><div class="s">How to use it · test record · go-live checklist</div></a></div>
     <div class="eyebrow">Capture<span class="ln"></span></div>
     <div class="softrow">${row('＋ Brain-dump','Park a thought without a day','braindump',`background:var(--p-wash);border-color:var(--p-line)`)}${row('Paste from Claude','Import the JSON capture format','paste')}</div>
     ${DB.inbox.length?`<div class="eyebrow">Inbox · ${DB.inbox.length}<button class="addmini" data-act="claude-triage">✶ sort with Claude</button><span class="ln"></span></div><div class="list">${DB.inbox.map((x,i)=>`<div class="t"><button class="check" data-act="inbox-done" data-i="${i}">${CHK}</button><span class="lab">${esc(x.label)}</span><button class="chev" data-act="inbox-del" data-i="${i}">✕</button></div>`).join('')}</div>`:''}
+    ${binHTML()}
     <div class="eyebrow">Connections<span class="ln"></span></div>
     <div id="odbox">${renderConnectionsInner()}</div>
     ${renderSyncLog()}
@@ -1437,7 +1566,27 @@ async function getToken(cfg, stateObj){
   return tok.access;
 }
 async function gText(path){ const t=await getToken(OD, odState); const r=await fetch(OD.graph+path,{headers:{Authorization:'Bearer '+t}}); if(r.status===404) return null; if(!r.ok) throw new Error('read '+r.status); return r.text(); }
-async function gPut(path, text){ const t=await getToken(OD, odState); const r=await fetch(OD.graph+path,{ method:'PUT', headers:{Authorization:'Bearer '+t,'Content-Type':'application/json'}, body:text }); if(!r.ok) throw new Error('write '+r.status); return r.json(); }
+/* 2.7: THE only OneDrive write. Throws (synchronously, before any token or network use) unless
+   the file is this copy's own: planner27* or backups27/*. The live planner-v2 file and its
+   backups/ folder can never be written from here. cond: {ifMatch:etag} or {ifNoneMatch:true}. */
+function odNameOk(name){ return typeof name==='string' && !name.includes('..') && !name.includes(':') && (/^planner27[\w.-]*\.json$/.test(name) || /^backups27\/[\w.-]+\.json$/.test(name)); }
+function odWrite(name, text, cond){
+  if(!odNameOk(name)) throw new Error('2.7 guard: refusing to write OneDrive file '+name);
+  return (async()=>{
+    const t=await getToken(OD, odState);
+    const headers={Authorization:'Bearer '+t,'Content-Type':'application/json'};
+    if(cond && cond.ifMatch) headers['If-Match']=cond.ifMatch;
+    else if(cond && cond.ifNoneMatch) headers['If-None-Match']='*';
+    const r=await fetch(OD.graph+APPROOT+'/'+name+':/content',{ method:'PUT', headers, body:text });
+    if(r.status===412) return { conflict:true };
+    if(!r.ok) throw new Error('write '+r.status);
+    return r.json();
+  })();
+}
+function odDelete(name){
+  if(!/^backups27\/[\w.-]+\.json$/.test(name||'')) throw new Error('2.7 guard: refusing to delete OneDrive file '+name);
+  return (async()=>{ const t=await getToken(OD, odState); const r=await fetch(OD.graph+APPROOT+'/'+name,{ method:'DELETE', headers:{Authorization:'Bearer '+t} }); if(!r.ok && r.status!==404) throw new Error('delete '+r.status); return true; })();
+}
 // merge cloud + local health rather than clobbering: a cloud copy that's newer on TASKS can still
 // carry staler HEALTH — union the day maps, newer health.updatedAt side wins conflicting days
 function mergeHealth(remoteH){
@@ -1468,19 +1617,18 @@ function mergeHealth(remoteH){
 }
 // conditional PUT: only succeeds if the cloud file still has the ETag we last saw — a 412 means
 // another device wrote first, and we must NEVER blindly overwrite it (the stale-overwrite class)
-async function gPutIfMatch(path, text, etag){
-  const t=await getToken(OD, odState);
-  const headers={Authorization:'Bearer '+t,'Content-Type':'application/json'};
-  if(etag) headers['If-Match']=etag;
-  const r=await fetch(OD.graph+path,{ method:'PUT', headers, body:text });
-  if(r.status===412) return { conflict:true };
-  if(!r.ok) throw new Error('write '+r.status);
-  return r.json();
+/* 2.7: main-file conditional PUT via odWrite. With no etag (first push after connect, or after
+   Disconnect) it is STILL conditional: If-None-Match:* — it may create the file, never replace one. */
+async function gPutIfMatch(name, text, etag){
+  if(!etag){ const m=await odItemMeta(); if(m) return { conflict:true }; }   /* 2.7 (review item 2): file exists and we never read its etag → conflict, never overwrite */
+  return odWrite(name, text, etag?{ifMatch:etag}:{ifNoneMatch:true});
 }
 // item metadata only — lets the pull check cost almost nothing when nothing changed
-async function odItemMeta(){
+async function odItemMeta(ifNoneMatch){
   const t=await getToken(OD, odState);
-  const r=await fetch(OD.graph+APPROOT+'/'+OD.file,{headers:{Authorization:'Bearer '+t}});
+  const h={Authorization:'Bearer '+t}; if(ifNoneMatch) h['If-None-Match']=ifNoneMatch;
+  const r=await fetch(OD.graph+APPROOT+'/'+OD.file,{headers:h, cache:'no-store'});
+  if(r.status===304) return { eTag:ifNoneMatch, notModified:true };
   if(r.status===404) return null;
   if(!r.ok) throw new Error('meta '+r.status);
   return r.json();
@@ -1495,7 +1643,10 @@ function countTasksIn(db){
   if(db&&db.future){ walk(db.future.personal); walk(db.future.work); }
   return { tasks, subs };
 }
-function exportShape(){ return JSON.stringify({ weeks:DB.weeks, recur:DB.recur, inbox:DB.inbox, projects:DB.projects, shopping:DB.shopping, health:DB.health, gym:DB.gym||{}, savedAt:Date.now(), rev:(Number.isInteger(DB.rev)?DB.rev:1), pushedBy:deviceId(), v:3 }); }   // v2.1: carry rev + device id
+/* 2.7 (2.5): top-level keys v2.4 does not know. Carried through export and every adopt path. */
+const P27_EXTRA = ['dayShapes','dayPlans','bin','imports','schema'];
+function exportObj(){ const o={ weeks:DB.weeks, recur:DB.recur, inbox:DB.inbox, projects:DB.projects, shopping:DB.shopping, health:DB.health, gym:DB.gym||{} }; P27_EXTRA.forEach(k=>{ if(DB[k]!==undefined) o[k]=DB[k]; }); o.savedAt=Date.now(); o.rev=(Number.isInteger(DB.rev)?DB.rev:1); o.pushedBy=deviceId(); o.v=3; return o; }
+function exportShape(){ return JSON.stringify(exportObj()); }   // v2.1: carry rev + device id   // v2.1: carry rev + device id
 
 /* ---- reconcile: READ-ONLY look at the cloud ---- */
 /* v2.0 (E0-A): the reconcile dialog compared TASK COUNTS ONLY. Re-planning a week moves
@@ -1560,7 +1711,7 @@ function remoteIsSafelyNewer(baseRev, remote, diff){
 }
 /* persist locally WITHOUT bumping savedAt/rev and WITHOUT scheduling a push. For unattended
    writes (Fitbit): the data is kept, this device never becomes "newest", never auto-pushes. */
-function saveLocalOnly(){ try{ DB._uid=UID; localStorage.setItem(STORE_KEY, JSON.stringify(DB)); }catch(e){} }
+function saveLocalOnly(){ try{ reconcileWithStored(); }catch(e){} DB._uid=UID; writeStore(JSON.stringify(DB)); }
 /* adopt a remote copy into this device (shared by pull and by an adopt-on-push-conflict). */
 function adoptRemote(remote, etag){
   migrate(remote);
@@ -1571,11 +1722,12 @@ function adoptRemote(remote, etag){
   const mergeList=(loc,rem)=>{ const l=Array.isArray(loc)?loc:[], r=Array.isArray(rem)?rem:[]; const seen=new Set(r.map(x=>x&&x.label)); return l.filter(x=>x&&!seen.has(x.label)).concat(r); };
   const keptInbox=mergeList(DB.inbox, remote.inbox), keptShop=mergeList(DB.shopping, remote.shopping);
   DB.weeks=remote.weeks; DB.recur=remote.recur||DB.recur; if(remote.projects)DB.projects=remote.projects; DB.inbox=keptInbox; DB.shopping=keptShop; mergeHealth(remote.health); if(remote.gym)DB.gym=remote.gym;
+  P27_EXTRA.forEach(k=>{ if(remote[k]!==undefined) DB[k]=remote[k]; });   /* 2.7 (2.5) */
   DB.savedAt=+remote.savedAt||DB.savedAt;
   DB.rev = Number.isInteger(remote.rev) ? remote.rev : (Number.isInteger(DB.rev)?DB.rev:1);
   reseedUID(DB);
   odState.etag=etag||odState.etag; odState.baseRev=DB.rev; odPersistMeta();
-  try{ localStorage.setItem(STORE_KEY, JSON.stringify(Object.assign({},DB,{_uid:UID}))); }catch(e){}
+  writeStore(JSON.stringify(Object.assign({},DB,{_uid:UID})));
   ui.weekKey=null;
   ui.claudeReads={}; _readsEpoch++;   /* v2.4 (panel: stress seat): the weeks just changed under us, so every
                           stored read describes a copy that no longer exists — drop them rather
@@ -1584,25 +1736,57 @@ function adoptRemote(remote, etag){
   odLog('pull-adopt', {rev:DB.rev, tasks:countTasksIn(DB).tasks, dated:datedCount(DB)});
 }
 async function odReconcile(){
+  const m=await odItemMeta();                                   /* 2.7 (R1): the etag of the copy we are about to show */
   const text=await gText(APPROOT+'/'+OD.file+':/content');
   if(text==null) return { kind:'empty' };
   let remote; try{ remote=JSON.parse(text); }catch(e){ return { kind:'corrupt' }; }
-  return { kind:'exists', remote, remoteText:text, remoteCount:countTasksIn(remote), localCount:countTasksIn(DB),
+  return { kind:'exists', remote, remoteText:text, etag:(m&&m.eTag)||null, remoteCount:countTasksIn(remote), localCount:countTasksIn(DB),
            remoteSavedAt:+remote.savedAt||0, localSavedAt:+DB.savedAt||0, diff:diffPlanner(DB,remote) };
 }
-function odPersistMeta(){ localStorage.setItem(OD.metaKey, JSON.stringify({ live:odState.live, account:odState.account, etag:odState.etag, baseRev:odState.baseRev })); }
+function odPersistMeta(){ localStorage.setItem(OD.metaKey, JSON.stringify({ live:odState.live, account:odState.account, etag:odState.etag, baseRev:odState.baseRev })); try{ _bc&&_bc.postMessage({meta:1}); }catch(e){} }
+/* 2.7 (3.6): one sync at a time across every tab of this origin. */
+function withSyncLock(fn){ try{ if(navigator.locks && navigator.locks.request) return navigator.locks.request('p27-sync', ()=>fn()); }catch(e){} return fn(); }
 
+/* 2.7 (R4): rolling cloud backups. At most one per 2 h per device (stamp kept in localStorage, so
+   reloads do not repeat it), each to a NEW name backups27/planner27-<date>-<hhmm>.json written with
+   If-None-Match:* so an existing backup is never replaced; the newest 30 are kept. */
+const BK_KEY='p27:od:lastbackup';
+async function odWriteBackup(text, tag){
+  const d=new Date(); const stem='backups27/planner27-'+computeTodayISO()+'-'+pad(d.getHours())+pad(d.getMinutes())+(tag?'-'+tag:'');
+  for(let i=0;i<6;i++){ const name=stem+(i?'-'+i:'')+'.json'; const r=await odWrite(name, text, {ifNoneMatch:true}); if(!(r&&r.conflict)) return name; }
+  throw new Error('backup name clash');
+}
+async function odMaybeBackup(force){
+  let last=0; try{ last=+(localStorage.getItem(BK_KEY)||0); }catch(e){}
+  if(!force && Date.now()-last < 2*3600e3) return null;
+  const cur=await gText(APPROOT+'/'+OD.file+':/content');
+  let name=null; if(cur!=null) name=await odWriteBackup(cur, force?'before-replace':'');
+  try{ localStorage.setItem(BK_KEY, String(Date.now())); }catch(e){}
+  odPruneBackups().catch(()=>{});
+  return name;
+}
+async function odPruneBackups(){
+  const t=await getToken(OD, odState);
+  const r=await fetch(OD.graph+APPROOT+'/backups27:/children?$select=name&$top=500',{headers:{Authorization:'Bearer '+t}});
+  if(!r.ok) return;
+  const j=await r.json(); const names=(j.value||[]).map(x=>x.name).filter(n=>/^planner27-[\w.-]+\.json$/.test(n)).sort();
+  const drop=names.slice(0, Math.max(0, names.length-30));
+  for(const n of drop){ await odDelete('backups27/'+n); }
+}
 /* ---- write: backup → conditional put → verify ---- */
 let _syncRetryT=null, _syncRetryN=0;
-async function odPush(){
+function odPush(){ return withSyncLock(_odPush); }
+async function _odPush(){
   if(!odState.connected || !odState.live || !DEPLOY_OK) return;
   if(odState.syncing) return;
+  onMetaChangedElsewhere();                                      /* 2.7 (3.6): another tab may have pushed — use its etag/base */
+  try{ reconcileWithStored(); }catch(e){}
   odState.syncing=true; updateSyncBadge();
   try{
     const payload=exportShape();
     const pushedRev=DB.rev;                                 /* v2.2 (integrity review F1): the rev this PUT actually carries */
-    if(odState.backedUp!==todayISO){ const cur=await gText(APPROOT+'/'+OD.file+':/content'); if(cur!=null){ await gPut(APPROOT+'/backups/'+OD.file.replace('.json','')+'-'+todayISO+'.json:/content', cur); } odState.backedUp=todayISO; }
-    let meta=await gPutIfMatch(APPROOT+'/'+OD.file+':/content', payload, odState.etag);
+    await odMaybeBackup();                                  /* 2.7 (R4): rolling backups, never overwritten */
+    let meta=await gPutIfMatch(OD.file, payload, odState.etag);
     if(meta && meta.conflict){
       /* v2.1 (FAULT 2): another device wrote since our last etag. Decide by REVISION, never
          by savedAt, and NEVER re-push with If-Match:null. If the cloud has advanced beyond
@@ -1615,7 +1799,7 @@ async function odPush(){
       odLog('push-conflict', {decision, rev:DB.rev, base:odState.baseRev, rrev:(remote&&Number.isInteger(remote.rev))?remote.rev:null,
         tasks:countTasksIn(DB).tasks, dated:datedCount(DB), rdated: remote?datedCount(remote):null, moved: diff?diff.moved:null});
       if(decision==='takeover'){
-        meta=await gPutIfMatch(APPROOT+'/'+OD.file+':/content', payload, cmeta&&cmeta.eTag);   // FRESH etag — never null
+        meta=await gPutIfMatch(OD.file, payload, cmeta&&cmeta.eTag);   // FRESH etag — never null
         if(meta && meta.conflict){ odState.syncing=false; odState.error='Cloud kept changing — will retry.'; updateSyncBadge(); return; }   /* v2.2: stays pending — retried on the next save/hide/online */
       } else if(decision==='adopt' && remote){
         adoptRemote(remote, cmeta&&cmeta.eTag);             // cloud loses us nothing — take it
@@ -1624,7 +1808,7 @@ async function odPush(){
         return;
       } else {
         // reconcile — position-aware message (fix 3): a push that moves tasks off their day is stopped and shown
-        odState.syncing=false; _pushPending=false;
+        odState.syncing=false; _pushPending=false; odState.blockedEtag=(cmeta&&cmeta.eTag)||null;
         odState.error = (diff&&diff.moved) ? ('Stopped a change that would move '+diff.moved+' task'+(diff.moved!==1?'s':'')+' off their day — review needed.')
                                            : 'Another device changed the cloud — review needed.';
         updateSyncBadge();
@@ -1652,19 +1836,22 @@ async function odPush(){
 /* ---- guarded auto-pull: open / focus / resume / online. Adopt silently ONLY when the cloud is
    strictly newer AND holds at least as many tasks; anything lossy goes through the reconcile
    dialog with its explicit discard warning. Costs one metadata GET when nothing changed. ---- */
-async function odPullCheck(reason){
+function odPullCheck(reason){ return withSyncLock(()=>_odPullCheck(reason)); }
+async function _odPullCheck(reason){
   if(!odState.connected || !odState.live || !DEPLOY_OK) return;
+  onMetaChangedElsewhere(); if(!(dlg&&dlg.open) && !dragging) onStoreChangedElsewhere();   /* 2.7 (3.6) */
   if(odState.syncing || odState.pulling || dragging) return;
   if(_pushPending && _syncRetryN<3){ flushSync(); return; }                     // unsynced local change: push it first — If-Match resolves any true conflict safely.
                                                                                 // After 3 straight push failures, stop starving pulls — If-Match still guards the data.
   if(typeof dlg!=='undefined' && dlg && dlg.open) return;                       // never swap data under an open dialog
-  if(reason!=='init' && Date.now()-odState.lastPull<12000) return;              // throttle rapid focus flips
+  if(reason!=='init' && Date.now()-odState.lastPull<3000) return;               /* 2.7 (R8): 3 s throttle (was 12 s) */
   odState.pulling=true;
   try{
-    const meta=await odItemMeta();
+    const meta=await odItemMeta(odState.etag);                                  /* 2.7 (R8): If-None-Match → 304 when unchanged */
     odState.lastPull=Date.now();
     if(!meta){ odState.pulling=false; return; }                                 // no cloud file yet
-    if(odState.etag && meta.eTag===odState.etag){ odState.pulling=false; updateSyncBadge(); return; }  // already current — done for one cheap call
+    if(meta.notModified || (odState.etag && meta.eTag===odState.etag)){ odState.pulling=false; updateSyncBadge(); return; }  // already current — done for one cheap call
+    if(odState.blockedEtag && meta.eTag===odState.blockedEtag){ odState.pulling=false; updateSyncBadge(); return; }   /* 2.7: already asked about this exact cloud copy — the badge says so; never re-open every 30 s */
     const text=await gText(APPROOT+'/'+OD.file+':/content');
     if(text==null){ odState.pulling=false; return; }
     let remote; try{ remote=JSON.parse(text); }catch(e){ odState.pulling=false; return; }   // corrupt cloud: manual reconcile only
@@ -1672,6 +1859,16 @@ async function odPullCheck(reason){
        savedAt must NOT read itself as "newest" and skip adopting the good cloud copy. */
     const diff = diffPlanner(DB, remote);
     if(dragging || (dlg&&dlg.open) || (_pushPending&&_syncRetryN<3)){ odState.pulling=false; return; }   // state changed while we were fetching — abort, try again later
+    /* 2.7 (3.5) SAFE HALF: this device has nothing unsynced (no pending push, local rev == the base it last
+       pushed/adopted) and the cloud advanced past that base → adopting loses nothing of this device's, so do
+       it silently — ticks, moves and renames included. Belt and braces: every task that would vanish must be
+       in the cloud copy's Bin; otherwise a human sees it. The clock never decides. */
+    { const rR=Number.isInteger(remote.rev)?remote.rev:null, bR=Number.isInteger(odState.baseRev)?odState.baseRev:null;
+      const clean = !_pushPending && !odState.syncing && Number.isInteger(DB.rev) && bR!=null && DB.rev===bR;
+      if(clean && rR!=null && rR>bR){
+        const rIds=plannerIndexById(remote), rBin=remote.bin||{}; let vanish=0; plannerIndexById(DB).forEach((v,id)=>{ if(!rIds.has(id) && !rBin[id]) vanish++; });
+        if(vanish===0){ odLog('pull', {rrev:remote.rev, tasks:countTasksIn(remote).tasks, dated:datedCount(remote), safe:1}); adoptRemote(remote, meta.eTag); odState.blockedEtag=null; odState.error=null; flashToast('Updated from OneDrive ✓'); odState.pulling=false; updateSyncBadge(); return; }
+      } }
     if(remoteIsSafelyNewer(odState.baseRev, remote, diff)){
       const before=countTasksIn(DB).tasks; const rBefore=countTasksIn(remote).tasks;
       if(rBefore<before){ odState.pulling=false; openReconcile(); return; }                  // belt-and-braces: never shrink silently
@@ -1682,21 +1879,28 @@ async function odPullCheck(reason){
     }
     // not safely-newer: either we're current/ahead, or the cloud diverged in a way a human must see.
     const rRev=Number.isInteger(remote.rev)?remote.rev:null, bRev=Number.isInteger(odState.baseRev)?odState.baseRev:null;
-    if(rRev!=null && bRev!=null && rRev>bRev && diff.any){
+    if((rRev==null || bRev==null || rRev>bRev) && diff.any){   /* 2.7: an unknown revision on either side is never 'current' */
       // cloud advanced past our base AND the two copies differ — do not overwrite either silently
-      if(!_pushPending){
+      /* 2.7 (review item 1): v2.4 only asked when no push was pending; after 3 failed pushes it fell through
+         and recorded the cloud etag, so the next push erased the other device's edit. Always ask here. */
+      {
         odLog('pull-blocked', {rrev:remote.rev, base:odState.baseRev, moved:diff.moved, tasks:countTasksIn(remote).tasks, dated:datedCount(remote)});
-        odState.error = diff.moved ? ('Cloud has '+diff.moved+' task'+(diff.moved!==1?'s':'')+' on different days — review needed.') : 'Cloud changed — review needed.';
-        odState.pulling=false; openReconcile(); return;
+        odState.error = 'This '+devWord()+' and OneDrive both changed — choose in More.';
+        odState.blockedEtag=meta.eTag||null; odState.pulling=false; updateSyncBadge(); openReconcile(); return;   /* 2.7 (D28): badge updated */
       }
     }
     odState.etag=meta.eTag||odState.etag; odPersistMeta();                                   // we are current/ahead — note etag so our pushes can If-Match
     odState.pulling=false; updateSyncBadge(); return;
-  }catch(e){ /* offline or auth hiccup — stay quiet, badge reflects connection state */ }
+  }catch(e){ /* offline or auth hiccup — stay quiet, badge reflects connection state (2.7: expired now shows) */ }
   odState.pulling=false; updateSyncBadge();
 }
+/* 2.7 (R8): while the page is visible, check the cloud every 30 s (one If-None-Match metadata GET; 304 when
+   nothing changed). Paused when hidden and after 10 min without any input, resumed by the next input. */
+let _lastInput=Date.now();
+['pointerdown','keydown','touchstart','wheel'].forEach(ev=>window.addEventListener(ev,()=>{ const idle=Date.now()-_lastInput>10*60e3; _lastInput=Date.now(); if(idle) odPullCheck('resume'); },{passive:true,capture:true}));
+setInterval(()=>{ if(document.visibilityState!=='visible') return; if(Date.now()-_lastInput>10*60e3) return; odPullCheck('poll'); }, 30000);
 document.addEventListener('visibilitychange', function(){ if(document.visibilityState==='visible'){ odPullCheck('visible'); if(fitState.connected) refreshHealth(); refreshGH(); } });
-window.addEventListener('focus', function(){ odPullCheck('focus'); });
+window.addEventListener('focus', function(){ if(odState.expired) maybeAutoRenew('od'); odPullCheck('focus'); });   /* 2.7 (R8): renewal retried on focus (guarded: once a session, 6 h back-off) */
 window.addEventListener('online', function(){ flushSync(); odPullCheck('online'); });
 let _syncT, _pushPending=false;
 function scheduleSync(){ if(!odState.connected||!odState.live) return; _pushPending=true; clearTimeout(_syncT); _syncT=setTimeout(odPush, 1500); }
@@ -1704,9 +1908,9 @@ function flushSync(){ if(!odState.connected||!odState.live||odState.syncing) ret
 document.addEventListener('visibilitychange', function(){ if(document.visibilityState==='hidden') flushSync(); });
 window.addEventListener('pagehide', flushSync);
 
-async function odMakeLive(){ odState.live=true; odPersistMeta(); updateSyncBadge(); await odPush(); if(ui.view==='more') renderMore(); flashToast(odState.error?'Save issue — see Connections':'This is now your live planner ✓'); }
+async function odMakeLive(){ odState.live=true; odState.blockedEtag=null; odPersistMeta(); updateSyncBadge(); await odPush(); if(ui.view==='more') renderMore(); flashToast(odState.error?'Save issue — see Connections':'This is now your live planner ✓'); }
 function odDisconnect(){ localStorage.removeItem(OD.tokKey); localStorage.removeItem(OD.metaKey); odState.connected=false; odState.live=false; odState.account=''; odState.error=null; updateSyncBadge(); if(ui.view==='more') renderMore(); flashToast('Disconnected — your tasks stay on this device'); }
-async function odBackupNow(){ exportJSON(); if(odState.connected&&DEPLOY_OK){ try{ const cur=await gText(APPROOT+'/'+OD.file+':/content'); if(cur!=null){ await gPut(APPROOT+'/backups/'+OD.file.replace('.json','')+'-'+todayISO+'-manual.json:/content', cur); flashToast('Backed up locally + to OneDrive'); } }catch(e){ flashToast('Local backup saved; cloud backup failed'); } } }
+async function odBackupNow(){ exportJSON(); if(odState.connected&&DEPLOY_OK){ try{ const cur=await gText(APPROOT+'/'+OD.file+':/content'); if(cur!=null){ await odWriteBackup(cur, 'manual'); flashToast('Backed up locally + to OneDrive'); } }catch(e){ flashToast('Local backup saved; cloud backup failed'); } } }
 
 function offerMakeLive(n){
   openDialog(`<h3>Make this device live?</h3><p>Your ${n} tasks are here — but this device is still <b>read-only</b>. Changes you make will stay on it and won't reach your other devices until you turn this on.</p><div class="acts"><button class="cancel" data-x="ml-no">Not yet</button><button class="save" data-x="ml-yes">Make live</button></div>`);
@@ -1737,17 +1941,19 @@ async function openReconcile(){
   _dlgGen++;   /* v2.4 (panel: stress seat): this writes the dialog directly, so it must take the
                   identity with it — otherwise a Claude reply still in flight draws its proposal
                   sheet straight over the divergence prompt. */
-  dlg.innerHTML=`<div class="dlg"><h3>Two copies found</h3>
-    <p>Nothing has changed yet — pick which becomes the source.</p>
+  saveEarlierCopy('This '+devWord()+' before choosing', JSON.stringify(Object.assign({},DB,{_uid:UID})));
+  saveEarlierCopy('OneDrive before choosing', res.remoteText);
+  dlg.innerHTML=`<div class="dlg"><h3>This ${devWord()} and OneDrive both changed</h3>
+    <p>Nothing has changed yet — pick which version to keep. The other version is kept in Earlier copies.</p>
     <div class="reccards">
-      <div class="recc ${newer==='cloud'?'newer':''}"><div class="recc-h">☁️ Cloud${newer==='cloud'?' · <b>newer</b>':(newer==='device'?' · older':'')}</div><div class="recc-n">${rc.tasks}</div><div class="recc-s">tasks · ${rc.subs} sub-tasks<br>${fmtSaved(res.remoteSavedAt)}</div></div>
-      <div class="recc ${newer==='device'?'newer':''}"><div class="recc-h">📱 This device${newer==='device'?' · <b>newer</b>':(newer==='cloud'?' · older':'')}</div><div class="recc-n">${lc.tasks}</div><div class="recc-s">tasks · ${lc.subs} sub-tasks<br>${fmtSaved(res.localSavedAt)}</div></div>
+      <div class="recc"><div class="recc-h">☁️ OneDrive</div><div class="recc-n">${rc.tasks}</div><div class="recc-s">tasks · ${rc.subs} sub-tasks<br>${fmtSaved(res.remoteSavedAt)}</div></div>
+      <div class="recc"><div class="recc-h">This ${devWord()}</div><div class="recc-n">${lc.tasks}</div><div class="recc-s">tasks · ${lc.subs} sub-tasks<br>${fmtSaved(res.localSavedAt)}</div></div>
     </div>
     <p class="conn-d" style="margin:8px 0 0">${diffLine}</p>
     <div class="acts" style="flex-wrap:wrap">
       <button class="cancel" data-x="cc">Cancel</button>
-      <button class="save" data-x="usecloud">Use cloud copy${newer==='device'?' (OLDER)':(newer==='cloud'?' (newer)':'')}</button>
-      <button class="save" data-x="usedevice" style="background:var(--w)">Keep this device${newer==='cloud'?' (OLDER)':(newer==='device'?' (newer)':'')}</button>
+      <button class="save" data-x="usecloud">Use OneDrive's version</button>
+      <button class="save" data-x="usedevice" style="background:var(--w)">Use this ${devWord()}'s version</button>
     </div>
     <div class="conn-d" style="margin-top:10px">“Use cloud” replaces this device’s copy with the cloud’s ${rc.tasks} tasks — if the cloud holds fewer than this device, you’ll be warned before anything is discarded. Nothing writes back until you tap <b>Make live</b>.</div></div>`;
   dlg.querySelector('[data-x=cc]').addEventListener('click',closeDialog);
@@ -1758,6 +1964,11 @@ async function openReconcile(){
     if(after<before){ flashToast('Import would drop tasks — aborted, nothing changed'); closeDialog(); return; }  // migration must never shrink the adopted copy
     const doAdopt=()=>{
       DB.weeks=adopted.weeks; DB.recur=adopted.recur||DB.recur; if(adopted.projects)DB.projects=adopted.projects; if(adopted.inbox)DB.inbox=adopted.inbox; if(adopted.shopping)DB.shopping=adopted.shopping; mergeHealth(adopted.health); if(adopted.gym)DB.gym=adopted.gym;
+      P27_EXTRA.forEach(k=>{ if(adopted[k]!==undefined) DB[k]=adopted[k]; });   /* 2.7 (2.5) */
+      /* 2.7 (R1): carry the revision — max(local, cloud), then saveDB adds 1 — and record the etag and
+         base of the copy just read, so Make live is an If-Match PUT that out-ranks every older device. */
+      const rr=Number.isInteger(adopted.rev)?adopted.rev:0; DB.rev=Math.max(Number.isInteger(DB.rev)?DB.rev:0, rr);
+      if(res.etag){ odState.etag=res.etag; odState.baseRev=rr; try{ odPersistMeta(); }catch(e){} }
       reseedUID(DB);   // adopted copy may carry higher ids than this device's counter — never reissue them
       /* v2.4 (panel: stress seat, second pass): this is the OTHER place the weeks are replaced
          wholesale — and the one that runs when the two copies genuinely disagree. Any stored
@@ -1777,7 +1988,43 @@ async function openReconcile(){
       doAdopt();
     }
   });
-  dlg.querySelector('[data-x=usedevice]').addEventListener('click',async()=>{ closeDialog(); await odMakeLive(); });
+  dlg.querySelector('[data-x=usedevice]').addEventListener('click',()=>{ closeDialog(); odKeepThisDevice(); });
+}
+function devWord(){ return isLap()?'laptop':'phone'; }
+/* 2.7 (M4): Earlier copies — whole-store versions kept on this device before any either/or choice or
+   import. Newest 4 kept; never written if it would crowd out the store itself (expendable). */
+const EARLIER_KEY='p27:snap:earlier';
+function earlierCopies(){ try{ return JSON.parse(localStorage.getItem(EARLIER_KEY)||'[]'); }catch(e){ return []; } }
+function saveEarlierCopy(label, text){
+  if(!text) return false;
+  let L=earlierCopies(); L.push({ at:Date.now(), label, text }); while(L.length>4) L.shift();
+  for(;;){ const blob=JSON.stringify(L); if(p27Usage()-((localStorage.getItem(EARLIER_KEY)||'').length)+blob.length < 3.2e6){ try{ localStorage.setItem(EARLIER_KEY, blob); return true; }catch(e){} } if(L.length<=1) return false; L.shift(); }
+}
+function p27Usage(){ let n=0; try{ for(let i=0;i<localStorage.length;i++){ const k=localStorage.key(i); if(k && k.startsWith('p27:')) n+=k.length+(localStorage.getItem(k)||'').length; } }catch(e){} return n; }
+/* 2.7 (R2): "Use this device's version" that actually wins: one confirm, back up the OneDrive copy
+   (cloud backup + Earlier copies), then PUT with the etag read just now and a revision above the cloud's. */
+function odKeepThisDevice(){
+  openConfirm('Replace the OneDrive copy?', `Replace the cloud copy with this ${devWord()}'s copy? OneDrive's version is saved first — as a backup in OneDrive and in Earlier copies.`, 'Replace OneDrive copy', ()=>{ withSyncLock(_odKeepThisDevice); });
+}
+async function _odKeepThisDevice(){
+  if(!odState.connected || !DEPLOY_OK){ flashToast('OneDrive is not connected'); return; }
+  odState.syncing=true; updateSyncBadge();
+  try{
+    if(!odState.live){ odState.live=true; }
+    const meta=await odItemMeta(); const text=meta?await gText(APPROOT+'/'+OD.file+':/content'):null;
+    let rrev=0; try{ rrev=(JSON.parse(text||'{}').rev)|0; }catch(e){}
+    if(text!=null){ saveEarlierCopy('OneDrive before it was replaced', text); try{ await odMaybeBackup(true); }catch(e){} }
+    DB.rev=Math.max(Number.isInteger(DB.rev)?DB.rev:0, rrev)+1; DB.savedAt=Date.now(); DB._uid=UID; writeStore(JSON.stringify(DB));
+    const payload=exportShape(); const pushedRev=DB.rev;
+    const r=await gPutIfMatch(OD.file, payload, meta?meta.eTag:null);
+    odState.syncing=false;
+    if(r && r.conflict){ odState.error='OneDrive changed again while replacing — look again.'; updateSyncBadge(); openReconcile(); return; }
+    if(r && (r.eTag||r['@odata.etag'])) odState.etag=r.eTag||r['@odata.etag'];
+    odState.baseRev=pushedRev; odState.error=null; odState.lastSync=Date.now(); _pushPending=false; odState.blockedEtag=null; odPersistMeta();
+    odLog('push-ok', {rev:pushedRev, tasks:countTasksIn(DB).tasks, dated:datedCount(DB), forced:true});
+    updateSyncBadge(); if(ui.view==='more') renderMore();
+    flashToast('OneDrive now has this '+devWord()+'’s version');
+  }catch(e){ odState.syncing=false; odState.error='Could not replace the OneDrive copy — '+e.message; updateSyncBadge(); }
 }
 
 /* ============================================================
@@ -1844,13 +2091,15 @@ function calCardInner(){
 }
 
 function syncLabel(){
+  if(persistState.error) return { dot:'#b78a3a', txt:'Not saved on this device' };   /* 2.7: a failed local write outranks every cloud state */
+  if(odState.connected && odState.expired) return { dot:'#b6ab98', txt:'OneDrive signed out · Sign in' };   /* 2.7 (R5): a dead token is never green */
   if(odState.error) return { dot:'#b78a3a', txt:'Sync issue · More' };
-  if(odState.syncing) return { dot:'#557785', txt:'Syncing…' };
-  if(odState.connected&&odState.live) return { dot:'#4e8a5a', txt:'Synced'+(odState.lastSync?' · '+hhmm(odState.lastSync):'') };
+  if(odState.syncing) return { dot:'#557785', txt:'Saving…' };
+  if(odState.connected&&odState.live) return { dot:'#4e8a5a', txt:'Saved'+(odState.lastSync?' '+hhmm(odState.lastSync):(odState.lastPull?' · checked '+hhmm(odState.lastPull):'')) };
   /* v2.0 (E0-A item 4): read-only used to look calm; it meant NOTHING was reaching the
      cloud, and it read as if it were about the calendar. Loud, and says what to do. */
   if(odState.connected) return { dot:'#b3402a', txt:'⚠ NOT SAVING to OneDrive · fix in More' };
-  return { dot:'#b6ab98', txt:'Local only' };
+  return { dot:'#b6ab98', txt:'On this device only' };
 }
 function updateSyncBadge(){ const el=document.querySelector('.synced'); if(el){ const s=syncLabel(); el.innerHTML='<span class="d" style="background:'+s.dot+'"></span>'+s.txt; } if(ui.view==='more'){ const c=document.getElementById('odbox'); if(c) c.innerHTML=renderConnectionsInner(); } }
 
@@ -1949,7 +2198,9 @@ function findTask(el){
   const w=el.dataset.w||el.closest('[data-w]')?.dataset.w;
   const dRaw=el.dataset.d!==undefined?el.dataset.d:el.closest('[data-d]')?.dataset.d;
   if(id==null||w==null) return null;
-  const wk=DB.weeks[w]; if(!wk) return null;
+  let wk=DB.weeks[w];
+  if(!wk && _shimKey===w && /^\d{4}-\d{2}-\d{2}$/.test(w)) wk=ensureWeek(w);   /* 2.7: first real action in a browsed week */
+  if(!wk) return null;
   const di = (dRaw==='F'||dRaw==='W')?dRaw:Number(dRaw);
   for(const kind of ['personal','work']){
     const arr=colArr(wk,di,kind); const idx=arr.findIndex(t=>t.id===id);
@@ -1959,6 +2210,7 @@ function findTask(el){
 }
 
 document.addEventListener('click', e=>{
+  if(e.target.closest('.synced')){ if(odState.connected && odState.expired){ reconnectOneDrive(); } else go('more'); return; }   /* 2.7: the sync badge is a door to its details */
   const goBtn=e.target.closest('[data-go]'); if(goBtn){ go(goBtn.dataset.go); return; }
   /* v2.0 (E4): in select mode a tap on a task row toggles selection instead of its
      normal action. The move button still opens the sheet for a single task. */
@@ -1989,6 +2241,11 @@ document.addEventListener('click', e=>{
   if(act==='braindump'){ openBrainDump(); return; }
   if(act==='paste'){ openPaste(); return; }
   if(act==='backup'){ exportJSON(); return; }
+  if(act==='imp-live'){ importFromLive(); return; }
+  if(act==='imp-file'){ importFromFile(); return; }
+  if(act==='imp-undo'){ openConfirm('Undo last copy?', 'This copy goes back to how it was before the last import. What is here now is kept in Earlier copies.', 'Undo copy', undoImport); return; }
+  if(act==='exp-canon'){ exportCanonical(); return; }
+  if(act==='earlier-restore'){ restoreEarlier(+a.dataset.i); return; }
   if(act==='excel'){ exportExcel(); return; }
   if(act==='prevweek'){ stepWeek(-1); return; }
   if(act==='nextweek'){ stepWeek(1); return; }
@@ -2002,7 +2259,8 @@ document.addEventListener('click', e=>{
   if(act==='lapadd'){ const i=document.getElementById('lapnew'); addTaskTo(todayMonday,todayDayIdx(),ui.kind,i.value); i.value=''; return; }
   if(act==='laneadd'){ openAddTask(a.dataset.w,(a.dataset.d==='F'||a.dataset.d==='W')?a.dataset.d:Number(a.dataset.d),a.dataset.k); return; }
   if(act==='inbox-done'){ const x=DB.inbox[+a.dataset.i]; addTaskTo(todayMonday,todayDayIdx(),'personal',x.label); DB.inbox.splice(+a.dataset.i,1); saveDB(); render(); return; }
-  if(act==='inbox-del'){ DB.inbox.splice(+a.dataset.i,1); saveDB(); renderMore(); return; }
+  if(act==='inbox-del'){ const i=+a.dataset.i; const gone=DB.inbox.splice(i,1)[0]; saveDB(); renderMore(); if(gone) flashUndo('Removed from inbox', ()=>{ DB.inbox.splice(Math.min(i,DB.inbox.length),0,gone); saveDB(); if(ui.view==='more') renderMore(); }); return; }
+  if(act==='binback'){ const r=putBack(a.dataset.bid); if(r){ saveDB(); render(); flashToast('Put back · '+(r==='already'?'it was already there':r.split('/')[1].replace('pool','Unscheduled').replace(/^d(\d)$/,(m,n)=>DOW[+n]))); } return; }
 
   // projects / reminders / claude
   if(act==='newproject'){ openNewProject(); return; }
@@ -2015,13 +2273,13 @@ document.addEventListener('click', e=>{
   if(act==='claude-triage'){ claudeTriage(); return; }
   if(act==='talk-week'){ talkWeek(); return; }
   if(act==='enable-notify'){ requestNotify(); return; }
-  if(act==='rem-done'){ const c=findTask(a); if(c){ c.t.done=true; ui.doneToday++; burstAt(a); saveDB(); renderReminders(); } return; }
+  if(act==='rem-done'){ const c=findTask(a); if(c){ c.t.done=true; c.t.doneAt=Date.now(); c.t.doneOn=computeTodayISO(); ui.doneToday++; burstAt(a); saveDB(); renderReminders(); } return; }
   if(act==='rem-snooze'){ const c=findTask(a); if(c){ const d=new Date(c.t.remind||Date.now()); d.setDate(d.getDate()+1); c.t.remind=toLocalISO(d); saveDB(); renderReminders(); flashToast('Snoozed 1 day'); } return; }
   if(act==='rem-clear'){ const c=findTask(a); if(c){ c.t.remind=null; saveDB(); renderReminders(); } return; }
   if(act==='shop-add'){ shopAdd(); return; }
   if(act==='shop-toggle'){ const i=+a.dataset.si; if(DB.shopping[i]){ DB.shopping[i].done=!DB.shopping[i].done; if(DB.shopping[i].done)burstAt(a); saveDB(); renderShopping(); } return; }
-  if(act==='shop-del'){ DB.shopping.splice(+a.dataset.si,1); saveDB(); renderShopping(); return; }
-  if(act==='shop-clear'){ DB.shopping=(DB.shopping||[]).filter(i=>!i.done); saveDB(); renderShopping(); return; }
+  if(act==='shop-del'){ const i=+a.dataset.si; const gone=DB.shopping.splice(i,1)[0]; saveDB(); renderShopping(); if(gone) flashUndo('Removed', ()=>{ DB.shopping.splice(Math.min(i,DB.shopping.length),0,gone); saveDB(); if(ui.view==='shopping') renderShopping(); }); return; }
+  if(act==='shop-clear'){ const prev=(DB.shopping||[]).slice(); DB.shopping=prev.filter(i=>!i.done); saveDB(); renderShopping(); flashUndo('Cleared ticked items', ()=>{ const have=new Set(DB.shopping.map(x=>x.id||x.label)); prev.forEach(x=>{ if(!have.has(x.id||x.label)) DB.shopping.push(x); }); saveDB(); if(ui.view==='shopping') renderShopping(); }); return; }
 
   // kind toggles
   if(a.closest('#lapkind') || a.closest('#kindseg')){ /* handled below */ }
@@ -2030,11 +2288,12 @@ document.addEventListener('click', e=>{
   const ctx=findTask(a); if(!ctx) return;
   const {t}=ctx;
   if(act==='check'){ toggleDone(ctx, a); return; }
-  if(act==='toggle'){ t.open=!t.open; saveDB(); rerenderInPlace(); return; }
+  if(act==='toggle'){ t.open=!t.open; rerenderInPlace(); return; }   /* 2.7 (D4): expand is view state — kept in memory, stored with the next real save, never a write of its own */
   if(act==='movesheet'){ openMoveSheet(ctx); return; }   // v2.0 (E5)
   if(act==='edit'){ openEdit(ctx); return; }
-  if(act==='subcheck'){ const j=+a.closest('[data-sub]').dataset.sub; t.subs[j].done=!t.subs[j].done; if(t.subs[j].done) burstAt(a); saveDB(); rerenderInPlace(); return; }
-  if(act==='delsub'){ const j=+a.closest('[data-sub]').dataset.sub; t.subs.splice(j,1); saveDB(); rerenderInPlace(); return; }
+  if(act==='subcheck'){ const j=+a.closest('[data-sub]').dataset.sub; t.subs[j].done=!t.subs[j].done; t.subs[j].doneAt=t.subs[j].done?Date.now():null; t.subs[j].doneOn=t.subs[j].done?computeTodayISO():null; if(t.subs[j].done) burstAt(a); saveDB(); rerenderInPlace(); return; }
+  if(act==='delsub'){ const j=+a.closest('[data-sub]').dataset.sub; const gone=t.subs.splice(j,1)[0]; saveDB(); rerenderInPlace();
+    if(gone) flashUndo('Sub-task removed', ()=>{ const c2=findTaskById(t.id); if(c2 && !c2.t.subs.some(x=>x.id===gone.id)){ c2.t.subs.splice(Math.min(j,c2.t.subs.length),0,gone); saveDB(); rerenderInPlace(); } }); return; }
   if(act==='addsub'){ openAddSub(ctx); return; }
 });
 
@@ -2107,6 +2366,8 @@ function rerenderInPlace(){
 function toggleDone(ctx, el){
   const {t}=ctx;
   t.done=!t.done;
+  /* 2.7 (2.2): when it was done, independent of where it sits. Display only. */
+  if(t.done){ t.doneAt=Date.now(); t.doneOn=computeTodayISO(); } else { t.doneAt=null; t.doneOn=null; }
   if(t.done){ ui.doneToday++; burstAt(el); }
   else if(ui.doneToday>0) ui.doneToday--;
   saveDB();
@@ -2144,9 +2405,9 @@ document.addEventListener('keydown', e=>{
 /* ----- week nav + carry ----- */
 function stepWeek(dir){
   const next=addDays(ui.weekKey, dir*7);
-  ui.weekKey=next; ensureWeek(next);
+  ui.weekKey=next;                 /* 2.7 (NAV-1): browsing is read-only — no ensureWeek, no saveDB. The week is
+                                      shown through weekView(); it is materialised by the first real edit in it. */
   if(ui.dayIdx!=='F' && Number(ui.dayIdx)>6) ui.dayIdx=0;
-  saveDB();
   viewTransition(render);
 }
 function doCarry(){
@@ -2156,7 +2417,7 @@ function doCarry(){
     ['personal','work'].forEach(kind=>{
       for(let i=d[kind].length-1;i>=0;i--){
         const t=d[kind][i];
-        if(!t.done){ t.defers=(t.defers||0)+1; to.days[di][kind].push(t); d[kind].splice(i,1); moved++; }
+        if(!t.done){ t.defers=(t.defers||0)+1; to.days[di][kind].push(t); d[kind].splice(i,1); moved++; noteMove(t, place(from.key,di,kind), place(to.key,di,kind), 'carry'); }
       }
     });
   });
@@ -2166,7 +2427,7 @@ function doCarry(){
     ['personal','work'].forEach(kind=>{
       for(let i=from[zone][kind].length-1;i>=0;i--){
         const t=from[zone][kind][i];
-        if(!t.done){ t.defers=(t.defers||0)+1; to[zone][kind].push(t); from[zone][kind].splice(i,1); moved++; }
+        if(!t.done){ t.defers=(t.defers||0)+1; to[zone][kind].push(t); from[zone][kind].splice(i,1); moved++; const zz=zone==='future'?'F':'W'; noteMove(t, place(from.key,zz,kind), place(to.key,zz,kind), 'carry'); }
       }
     });
   });
@@ -2186,15 +2447,15 @@ function doCarryNext(){
   dlg.querySelector('[data-x=yes]').addEventListener('click',()=>{
     closeDialog();
     const to=ensureWeek(nx); let moved=0;
-    from.days.forEach(d=>{
+    from.days.forEach((d,ddi)=>{
       ['personal','work'].forEach(kind=>{
-        for(let i=d[kind].length-1;i>=0;i--){ const t=d[kind][i]; if(!t.done){ t.defers=(t.defers||0)+1; to.future[kind].push(t); d[kind].splice(i,1); moved++; } }
+        for(let i=d[kind].length-1;i>=0;i--){ const t=d[kind][i]; if(!t.done){ t.defers=(t.defers||0)+1; to.future[kind].push(t); d[kind].splice(i,1); moved++; noteMove(t, place(from.key,ddi,kind), place(to.key,'F',kind), 'carry'); } }
       });
     });
     ['weekend','future'].forEach(zone=>{
       if(!from[zone]) return;
       ['personal','work'].forEach(kind=>{
-        for(let i=from[zone][kind].length-1;i>=0;i--){ const t=from[zone][kind][i]; if(!t.done){ t.defers=(t.defers||0)+1; to.future[kind].push(t); from[zone][kind].splice(i,1); moved++; } }
+        for(let i=from[zone][kind].length-1;i>=0;i--){ const t=from[zone][kind][i]; if(!t.done){ t.defers=(t.defers||0)+1; to.future[kind].push(t); from[zone][kind].splice(i,1); moved++; noteMove(t, place(from.key,zone==='future'?'F':'W',kind), place(to.key,'F',kind), 'carry'); } }
       });
     });
     saveDB(); ui.weekKey=nx;
@@ -2228,7 +2489,7 @@ function doPullPools(){
     `<b>${s.length}</b> unfinished task${s.length!==1?'s':''} from past weeks (back to w/c ${wcShort(oldest)}) will move into this week's Unscheduled list for sorting. Nothing is deleted, ticked tasks stay where they are.`,
     `Move ${s.length} in`, ()=>{
       const to=ensureWeek(ui.weekKey>=todayMonday?ui.weekKey:todayMonday);
-      s.forEach(({wk,di,kind,t})=>{ const arr=colArr(wk,di,kind); const i=arr.indexOf(t); if(i>=0){ arr.splice(i,1); t.defers=(t.defers||0)+1; to.future[kind].push(t); } });
+      s.forEach(({wk,di,kind,t})=>{ const arr=colArr(wk,di,kind); const i=arr.indexOf(t); if(i>=0){ arr.splice(i,1); t.defers=(t.defers||0)+1; to.future[kind].push(t); noteMove(t, place(wk.key,di,kind), place(to.key,'F',kind), 'pull'); } });
       saveDB(); flashToast(`Moved ${s.length} overdue task${s.length!==1?'s':''} into this week's Future`);
       render();
     });
@@ -2290,7 +2551,7 @@ function openEdit(ctx){
   dlg.querySelector('.acts').addEventListener('click', e=>{
     const x=e.target.closest('[data-x]')?.dataset.x; if(!x) return;
     if(x==='cancel'){ closeDialog(); return; }
-    if(x==='del'){ closeDialog(); openConfirm('Delete task?', `“${esc(t.label)}”${t.subs.length?' and its '+t.subs.length+' sub-task'+(t.subs.length!==1?'s':''):''} will be removed. This can’t be undone.`, 'Delete', ()=>{ const p=ctx.arr.indexOf(t); if(p>=0)ctx.arr.splice(p,1); saveDB(); render(); }); return; }
+    if(x==='del'){ closeDialog(); if(binTask(ctx)){ saveDB(); render(); flashUndo('Moved to Bin', ()=>{ if(putBack(t.id)){ saveDB(); render(); } }); } return; }   /* 2.7 (2.6): nothing is hard-deleted */
     if(x==='save'){
       const lab=dlg.querySelector('#f-label').value.trim(); if(lab) t.label=lab;
       const s=dlg.querySelector('#f-s').value.trim(), en=dlg.querySelector('#f-e').value.trim();
@@ -2311,25 +2572,25 @@ function openEdit(ctx){
         const pos=ctx.arr.indexOf(t); if(pos>=0)ctx.arr.splice(pos,1);
         const wkKey=isoMonday(new Date(+md.slice(0,4),+md.slice(5,7)-1,+md.slice(8,10)));
         const wk2=ensureWeek(wkKey); if(wkKey>ctx.wk.key) t.defers=(t.defers||0)+1;
-        wk2.days[daysBetween(wkKey,md)][t.kind].push(t); moved=true;
+        wk2.days[daysBetween(wkKey,md)][t.kind].push(t); moved=true; noteMove(t, place(ctx.wk.key,ctx.di,ctx.kind), place(wkKey,daysBetween(wkKey,md),t.kind), 'mv');
       } else if(dv==='T'){
         const pos=ctx.arr.indexOf(t); if(pos>=0)ctx.arr.splice(pos,1);
         const twk=ensureWeek(todayMonday); if(todayMonday>ctx.wk.key) t.defers=(t.defers||0)+1;
-        twk.days[todayDayIdx()][t.kind].push(t); moved=true;
+        twk.days[todayDayIdx()][t.kind].push(t); moved=true; noteMove(t, place(ctx.wk.key,ctx.di,ctx.kind), place(todayMonday,todayDayIdx(),t.kind), 'mv');
       } else if(dv==='N'){
         const pos=ctx.arr.indexOf(t); if(pos>=0)ctx.arr.splice(pos,1);
-        const nwk=ensureWeek(addDays(base,7)); t.defers=(t.defers||0)+1; nwk.future[t.kind].push(t); moved=true;
+        const nwk=ensureWeek(addDays(base,7)); t.defers=(t.defers||0)+1; nwk.future[t.kind].push(t); moved=true; noteMove(t, place(ctx.wk.key,ctx.di,ctx.kind), place(nwk.key,'F',t.kind), 'mv');
       } else if(dv!==''){
         const newDi = (dv==='F'||dv==='W')?dv:Number(dv);
         if(fromPast || newDi!==ctx.di){
           const pos=ctx.arr.indexOf(t); if(pos>=0)ctx.arr.splice(pos,1);
           if(base>ctx.wk.key) t.defers=(t.defers||0)+1;
-          colArr(bwk,newDi,t.kind).push(t); moved=true;
+          colArr(bwk,newDi,t.kind).push(t); moved=true; noteMove(t, place(ctx.wk.key,ctx.di,ctx.kind), place(base,newDi,t.kind), 'mv');
         }
       }
       if(!moved && laneChanged){          // same slot, other lane — re-file it where it stands
         const pos=ctx.arr.indexOf(t); if(pos>=0)ctx.arr.splice(pos,1);
-        colArr(ctx.wk, ctx.di, t.kind).push(t);
+        colArr(ctx.wk, ctx.di, t.kind).push(t); noteMove(t, place(ctx.wk.key,ctx.di,ctx.kind), place(ctx.wk.key,ctx.di,t.kind), 'mv');
       }
       closeDialog(); saveDB(); render();
     }
@@ -2395,24 +2656,53 @@ function applyMove(ctx, target, baseKey){
   if(target==='T') target = todayISO;   // resolved now, so a sheet held open past midnight still means today
   const base = baseKey || ctx.wk.key;   // for overdue (past-week) tasks the move targets the CURRENT week, not the week they were left in
   const pos=ctx.arr.indexOf(t); if(pos<0) return false;
+  const from=place(ctx.wk.key, ctx.di, t.kind); let to;
   if(target==='N'){
     ctx.arr.splice(pos,1);
-    const nwk=ensureWeek(addDays(base,7)); t.defers=(t.defers||0)+1; nwk.future[t.kind].push(t);
+    const nwk=ensureWeek(addDays(base,7)); t.defers=(t.defers||0)+1; nwk.future[t.kind].push(t); to=place(nwk.key,'F',t.kind);
   } else if(/^\d{4}-\d{2}-\d{2}$/.test(target)){
     ctx.arr.splice(pos,1);
     const wkKey=isoMonday(new Date(+target.slice(0,4), +target.slice(5,7)-1, +target.slice(8,10)));
     const wk2=ensureWeek(wkKey);
     if(wkKey>ctx.wk.key) t.defers=(t.defers||0)+1;
-    wk2.days[daysBetween(wkKey,target)][t.kind].push(t);
+    const dd=daysBetween(wkKey,target); wk2.days[dd][t.kind].push(t); to=place(wkKey,dd,t.kind);
   } else {
     const di2=(target==='F'||target==='W')?target:Number(target);
     if(base===ctx.wk.key && di2===ctx.di) return false;
     ctx.arr.splice(pos,1);
     const bwk=ensureWeek(base);
     if(base>ctx.wk.key) t.defers=(t.defers||0)+1;
-    colArr(bwk,di2,t.kind).push(t);
+    colArr(bwk,di2,t.kind).push(t); to=place(base,di2,t.kind);
   }
+  noteMove(t, from, to, 'mv');
   return true;
+}
+/* 2.7 (2.6): the Bin. bin[id] = {task, from:<placement>, idx, at, by}. Put back returns the task to the
+   same week/slot/lane at its old index (clamped); if that week no longer exists, to that week's
+   Unscheduled. Entries older than 60 days are pruned on save. */
+function binTask(ctx){
+  const {t,wk,di,arr}=ctx; const idx=arr.indexOf(t); if(idx<0) return false;
+  arr.splice(idx,1); DB.bin=DB.bin||{};
+  DB.bin[t.id]={ task:t, from:place(wk.key, di, t.kind==='work'?'work':'personal'), idx, at:Date.now(), by:'app' };
+  return true;
+}
+function putBack(id){
+  const e=DB.bin&&DB.bin[id]; if(!e||!e.task) return null;
+  if(findTaskById(id)){ delete DB.bin[id]; return 'already'; }
+  const t=e.task; const [w,slot]=String(e.from||'').split('/'); const lane=(t.kind==='work')?'work':'personal';
+  let wk=DB.weeks[w], di;
+  if(wk && Array.isArray(wk.days)){ di = slot==='pool'?'F' : slot==='weekend'?'W' : (/^d[0-6]$/.test(slot||'')?Number(slot.slice(1)):'F'); }
+  else { wk=ensureWeek(/^\d{4}-\d{2}-\d{2}$/.test(w||'')?w:todayMonday); di='F'; }
+  const arr=colArr(wk,di,lane); const i=Math.max(0, Math.min(Number.isInteger(e.idx)?e.idx:arr.length, arr.length));
+  arr.splice(i,0,t); delete DB.bin[id];
+  return place(wk.key,di,lane);
+}
+function pruneBin(){ if(!DB.bin) return; const cut=Date.now()-60*864e5; Object.keys(DB.bin).forEach(k=>{ const e=DB.bin[k]; if(!e || !(+e.at>cut)) delete DB.bin[k]; }); }
+function binHTML(){
+  const es=Object.entries(DB.bin||{}).filter(([,e])=>e&&e.task).sort((a,b)=>(+b[1].at||0)-(+a[1].at||0));
+  if(!es.length) return `<div class="eyebrow">Bin<span class="ln"></span></div><div class="empty" style="padding:10px"><div class="s">Nothing in the Bin. Deleted tasks wait here for 60 days.</div></div>`;
+  const where=f=>{ const [w,sl,ln]=String(f||'').split('/'); const sn=sl==='pool'?'Unscheduled':sl==='weekend'?'Weekend':(/^d\d$/.test(sl||'')?DOW[+sl.slice(1)]:sl); return (w?'w/c '+wcShort(w)+' · ':'')+sn+' · '+(ln==='work'?'Work':'Personal'); };
+  return `<div class="eyebrow">Bin · ${es.length}<span class="ln"></span></div><div class="list" id="binlist">${es.map(([id,e])=>`<div class="t" data-bin="${esc(id)}"><span class="lab">${esc(e.task.label)} <span class="subdesc">${esc(where(e.from))} · deleted ${new Date(+e.at).getDate()} ${MON[new Date(+e.at).getMonth()]}</span></span><button class="addmini" data-act="binback" data-bid="${esc(id)}" style="min-height:36px;padding:0 12px">Put back</button></div>`).join('')}</div><div class="conn-d" style="margin-top:4px">Kept 60 days, then cleared.</div>`;
 }
 function moveTask(ctx, target, baseKey){
   const {t}=ctx;
@@ -2474,7 +2764,8 @@ function openBulkMoveSheet(){
 /* Counts exactly what applyRecurringFrom(todayMonday) would ADD — weekly AND interval
    rules — so the number shown to Tom matches what accepting actually creates. */
 function recurCatchupPreview(){
-  let n=0;
+  let n=0; const ids=allIdSet(); const bpl=binPlaceLabels();
+  const would=(r,lane,k,di,iso,arr)=>!ids.has('t:'+ruleId(r)+':'+iso) && !arr.some(t=>t.label===r.label) && !bpl.has(place(k,di,lane)+'|'+r.label);
   Object.keys(DB.weeks).filter(k=>k>=todayMonday).forEach(k=>{
     const wk=DB.weeks[k]; if(!wk||!Array.isArray(wk.days)) return;
     (DB.recur||[]).forEach(r=>{
@@ -2487,14 +2778,14 @@ function recurCatchupPreview(){
           if(iso<anchor||iso<todayISO) continue;
           if(daysBetween(anchor,iso)%every!==0) continue;
           const arr=wk.days[i]&&wk.days[i][lane]; if(!arr) continue;
-          if(!arr.some(t=>t.label===r.label)) n++;
+          if(would(r,lane,k,i,iso,arr)) n++;
         }
         return;
       }
       const di=recurDayIdx(r); if(di<0) return;
       if(addDays(k,di)<todayISO) return;
       const arr=wk.days[di]&&wk.days[di][lane]; if(!arr) return;
-      if(!arr.some(t=>t.label===r.label)) n++;
+      if(would(r,lane,k,di,addDays(k,di),arr)) n++;
     });
   });
   return n;
@@ -2569,14 +2860,239 @@ function openBrainDump(){
   dlg.querySelector('[data-x="save"]').addEventListener('click',done);
   dlg.querySelector('[data-x="cancel"]').addEventListener('click',closeDialog);
 }
+/* =====================================================================
+   2.7 STEP 4 — IMPORT, RESTORE, EXPORT
+   Canonical interchange 'planner-canonical/1' (out/e-data-sync §4). Every import: read-only source →
+   canonical → back to the nested store → assert (all must pass or nothing is written) → preview →
+   Apply = undo copy to p27:snap:import, replace, re-read, re-assert. Same source twice = no-op.
+   ===================================================================== */
+const CANON='planner-canonical/1';
+const SNAP_IMPORT='p27:snap:import';
+function slotOf(di){ return di==='F'?'pool':di==='W'?'weekend':'d'+di; }
+function diOfSlot(sl){ return sl==='pool'?'F':sl==='weekend'?'W':Number(String(sl).slice(1)); }
+function localDow(iso){ const [y,m,d]=iso.split('-').map(Number); return (new Date(y,m-1,d).getDay()+6)%7; }
+function mondayOfISO(iso){ return addDays(iso, -localDow(iso)); }
+async function sha256hex(text){ const b=await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)); return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join(''); }
+async function sha1hex(text){ const b=await crypto.subtle.digest('SHA-1', new TextEncoder().encode(text)); return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join(''); }
+function stableJSON(v){ if(Array.isArray(v)) return '['+v.map(stableJSON).join(',')+']'; if(v&&typeof v==='object') return '{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+stableJSON(v[k])).join(',')+'}'; return JSON.stringify(v); }
+/* legacy shapes → nested weeks (copy; source untouched): week-as-array (June) and top-level days/future */
+function normaliseLegacy(src){
+  const o=JSON.parse(JSON.stringify(src||{})); const notes=[]; o.weeks=(o.weeks&&typeof o.weeks==='object')?o.weeks:{};
+  Object.keys(o.weeks).forEach(W=>{ const wk=o.weeks[W]; if(Array.isArray(wk)){ o.weeks[W]={ days:wk, future:{personal:[],work:[]}, weekend:{personal:[],work:[]} }; notes.push('w/c '+W+' was in the June week format — read as days'); } });
+  if(Array.isArray(o.days) || (o.future&&typeof o.future==='object')){
+    const W=isoMonday(new Date(+o.savedAt||Date.now())); const wk=o.weeks[W]||(o.weeks[W]={days:emptyWeekDays(W),future:{personal:[],work:[]},weekend:{personal:[],work:[]}});
+    if(!Array.isArray(wk.days)) wk.days=emptyWeekDays(W);
+    (o.days||[]).forEach((d,i)=>['personal','work'].forEach(k=>{ ((d&&d[k])||[]).forEach(t=>{ (wk.days[i][k]=wk.days[i][k]||[]).push(t); }); }));
+    ['personal','work'].forEach(k=>((o.future||{})[k]||[]).forEach(t=>{ (wk.future[k]=wk.future[k]||[]).push(t); }));
+    notes.push('an older top-level week was found and placed in w/c '+W); delete o.days; delete o.future;
+  }
+  return { obj:o, notes };
+}
+const KNOWN_TOP=['weeks','recur','inbox','projects','shopping','health','gym','savedAt','rev','v','_uid','pushedBy','dayShapes','dayPlans','bin','imports','schema'];
+function toCanonical(src){
+  const notes=[]; const seen=new Set(); const tasks=[]; const weekKeys=Object.keys(src.weeks||{}).sort();
+  weekKeys.forEach(W=>{ const wk=src.weeks[W]; if(!wk||typeof wk!=='object') return;
+    const buckets=[]; (Array.isArray(wk.days)?wk.days:[]).forEach((d,i)=>{ ['personal','work'].forEach(k=>buckets.push(['d'+i,k,(d&&d[k])||[]])); if(d&&Array.isArray(d.appts)&&d.appts.length) notes.push(d.appts.length+' calendar entries stored inside w/c '+W+' were left out (calendar is not task data)'); });
+    [['future','pool'],['weekend','weekend']].forEach(([z,sl])=>['personal','work'].forEach(k=>buckets.push([sl,k,((wk[z]||{})[k])||[]])));
+    buckets.forEach(([slot,lane,arr])=>{ (Array.isArray(arr)?arr:[]).forEach((t0,ord)=>{ if(!t0||typeof t0!=='object') return;
+      const t=JSON.parse(JSON.stringify(t0)); let id=(t.id!=null&&t.id!=='')?String(t.id):('k'+fnv36(W+'/'+slot+'/'+lane+'/'+ord+'/'+(t.label||'')));
+      if(seen.has(id)){ let n=2; while(seen.has(id+'~'+n)) n++; notes.push('duplicate id '+id+' renamed '+id+'~'+n+' ('+String(t.label||'').slice(0,40)+')'); id=id+'~'+n; }
+      seen.add(id);
+      const x={}; if(t.kind!==undefined && t.kind!==lane){ x.kindWas=t.kind; notes.push('“'+String(t.label||'').slice(0,40)+'” said '+t.kind+' but sat in '+lane+' — kept in '+lane); }
+      const subs=(Array.isArray(t.subs)?t.subs:[]).map((sb,j)=> typeof sb==='string' ? {id:'s:'+id+':'+j,label:sb,done:false} : Object.assign({}, sb, {id:(sb&&sb.id!=null)?sb.id:('s:'+id+':'+j)}));
+      delete t.kind; const ct=Object.assign(t, {id, lane, week:W, slot, ord, subs}); if(Object.keys(x).length) ct.x=Object.assign({}, t.x||{}, x);
+      tasks.push(ct); }); }); });
+  const h=src.health||{}; const hd={}; Object.entries(h.days||{}).forEach(([d,v])=>{ (hd[d]=hd[d]||{}).fit=v; }); Object.entries((h.gh||{}).days||{}).forEach(([d,v])=>{ (hd[d]=hd[d]||{}).gh=v; });
+  const fitMeta=Object.assign({}, h); delete fitMeta.days; delete fitMeta.gh; const ghMeta=h.gh?Object.assign({}, h.gh):null; if(ghMeta) delete ghMeta.days;
+  const extras={}; Object.keys(src).forEach(k=>{ if(!KNOWN_TOP.includes(k)) extras[k]=src[k]; });
+  return { schema:CANON, exportedAt:Date.now(), source:{ app:(src.schema?'2.7':'v2.4'), rev:Number.isInteger(src.rev)?src.rev:null, savedAt:+src.savedAt||null },
+    weeks:weekKeys, tasks,
+    rules:(src.recur||[]).map(r=>({ id:ruleId(r), label:r.label, lane:recurLane(r), type:r.type==='interval'?'interval':'weekly', day:r.type==='interval'?null:recurDayIdx(r), every:r.every||null, anchor:r.anchor||null, subs:(r.subs||[]).map(x=>typeof x==='string'?x:(x&&x.label)||''), x:r })),
+    projects:JSON.parse(JSON.stringify(src.projects||[])), inbox:(src.inbox||[]).map((it,i)=>({ id:(it&&it.id)||('i:'+fnv36((it&&it.label||'')+'|'+i)), label:it&&it.label, x:it })),
+    shopping:JSON.parse(JSON.stringify(src.shopping||[])), health:{ days:hd, fitMeta, ghMeta }, gym:Object.assign({}, src.gym||{}),
+    dayShapes:src.dayShapes, dayPlans:src.dayPlans, bin:src.bin, extras, notes };
+}
+function fromCanonical(C){
+  const weeks={}; (C.weeks||[]).forEach(W=>{ weeks[W]=skelWeek(W); });
+  const tasks=(C.tasks||[]).slice().sort((a,b)=>(a.week<b.week?-1:a.week>b.week?1:0)||String(a.slot).localeCompare(String(b.slot))||(a.lane<b.lane?-1:a.lane>b.lane?1:0)||(a.ord-b.ord));
+  tasks.forEach(ct=>{ if(!weeks[ct.week]) weeks[ct.week]=skelWeek(ct.week); const t=JSON.parse(JSON.stringify(ct)); const lane=t.lane, W=t.week, slot=t.slot;
+    delete t.lane; delete t.week; delete t.slot; delete t.ord; if(t.x){ delete t.x.kindWas; if(!Object.keys(t.x).length) delete t.x; }
+    t.kind=lane; colArr(weeks[W], diOfSlot(slot), lane).push(t); });
+  const h=C.health||{}; const health=Object.assign({}, h.fitMeta||{}); health.days={}; let gh=null;
+  Object.entries(h.days||{}).forEach(([d,v])=>{ if(v&&v.fit!==undefined) health.days[d]=v.fit; if(v&&v.gh!==undefined){ gh=gh||{}; gh[d]=v.gh; } });
+  if(h.ghMeta||gh) health.gh=Object.assign({}, h.ghMeta||{}, {days:gh||{}});
+  const out=Object.assign({}, C.extras||{}, { weeks, recur:(C.rules||[]).map(r=>r.x||{id:r.id,label:r.label,kind:r.lane,day:r.day,type:r.type==='interval'?'interval':undefined,every:r.every,anchor:r.anchor,subs:r.subs}),
+    inbox:(C.inbox||[]).map(i=>i.x||{label:i.label}), projects:C.projects||[], shopping:C.shopping||[], health, gym:C.gym||{}, v:3, rev:(C.source&&Number.isInteger(C.source.rev))?C.source.rev:1, savedAt:(C.source&&C.source.savedAt)||Date.now() });
+  ['dayShapes','dayPlans','bin'].forEach(k=>{ if(C[k]!==undefined) out[k]=C[k]; });
+  return out;
+}
+function storeCounts(db){
+  let tasks=0, done=0, subs=0, subsDone=0; const buckets={};
+  Object.entries(db.weeks||{}).forEach(([W,wk])=>{ if(!wk) return; const add=(slot,k,arr)=>{ (arr||[]).forEach(t=>{ if(!t) return; tasks++; if(t.done) done++; (t.subs||[]).forEach(x=>{ subs++; if(x&&x.done) subsDone++; }); }); if((arr||[]).length) buckets[W+'/'+slot+'/'+k]=(arr||[]).length; };
+    (wk.days||[]).forEach((d,i)=>['personal','work'].forEach(k=>add('d'+i,k,d&&d[k]))); [['future','pool'],['weekend','weekend']].forEach(([z,sl])=>['personal','work'].forEach(k=>add(sl,k,(wk[z]||{})[k]))); });
+  const h=db.health||{};
+  return { tasks, done, subs, subsDone, weeks:Object.keys(db.weeks||{}).length, rules:(db.recur||[]).length, projects:(db.projects||[]).length, inbox:(db.inbox||[]).length, shopping:(db.shopping||[]).length, healthDays:Object.keys(h.days||{}).length, ghDays:Object.keys((h.gh||{}).days||{}).length, gym:Object.keys(db.gym||{}).length, buckets };
+}
+function canonCounts(C){ const v=fromCanonical(C); return storeCounts(v); }
+const COUNT_ROWS=[['tasks','Tasks'],['done','Done'],['subs','Sub-tasks'],['weeks','Weeks'],['rules','Repeat rules'],['projects','Projects'],['inbox','Inbox'],['shopping','Shopping'],['healthDays','Health days'],['ghDays','Google Health days'],['gym','Gym days']];
+/* every assertion of §4.5 step 3; returns a list of failures (empty = pass) */
+function assertSame(srcNorm, result, idRenames){
+  const f=[]; const a=storeCounts(srcNorm), b=storeCounts(result);
+  COUNT_ROWS.forEach(([k,l])=>{ if(a[k]!==b[k]) f.push(l+': '+a[k]+' in the source, '+b[k]+' in the copy'); });
+  if(a.subsDone!==b.subsDone) f.push('Sub-tasks done differ');
+  const ka=Object.keys(a.buckets), kb=Object.keys(b.buckets); new Set([...ka,...kb]).forEach(k=>{ if((a.buckets[k]||0)!==(b.buckets[k]||0)) f.push('Bucket '+k+': '+(a.buckets[k]||0)+' vs '+(b.buckets[k]||0)); });
+  const ia=new Map(), ib=new Map(); const walk=(db,m)=>Object.values(db.weeks||{}).forEach(wk=>{ if(!wk) return; (wk.days||[]).forEach(d=>['personal','work'].forEach(k=>((d&&d[k])||[]).forEach(t=>t&&m.set(String(t.id),t)))); ['future','weekend'].forEach(z=>['personal','work'].forEach(k=>(((wk[z]||{})[k])||[]).forEach(t=>t&&m.set(String(t.id),t)))); });
+  walk(result, ib);
+  if(!idRenames){ walk(srcNorm, ia); if(ia.size!==ib.size) f.push('Id count differs'); ia.forEach((t,id)=>{ const u=ib.get(id); if(!u){ f.push('Missing id '+id); return; } if(u.label!==t.label) f.push('Label differs on '+id); if((u.subs||[]).length!==(t.subs||[]).length) f.push('Sub-task count differs on '+id); if(!!u.done!==!!t.done) f.push('Done differs on '+id); }); }
+  return f.slice(0,12);
+}
+/* build a preview from source text. kind: 'live' | 'file' | 'earlier' | 'snapday' */
+async function buildImport(text, kind, label){
+  let obj; try{ obj=JSON.parse(text); }catch(e){ return { error:'That is not a planner file (it is not valid JSON).' }; }
+  if(!obj || typeof obj!=='object') return { error:'That is not a planner file.' };
+  const hash=await sha256hex(text); let C, srcNorm, notes=[], idRenames=false;
+  if(obj.schema===CANON){ C=obj; srcNorm=fromCanonical(obj); notes=(obj.notes||[]).slice(); }
+  else if(obj.weeks || obj.days || obj.future){ const n=normaliseLegacy(obj); srcNorm=n.obj; notes=n.notes; C=toCanonical(srcNorm); notes=notes.concat(C.notes); idRenames=C.notes.some(x=>/^duplicate id/.test(x)); }
+  else return { error:'No weeks or tasks found in that file.' };
+  const result=fromCanonical(C); const fails=assertSame(srcNorm, result, idRenames);
+  const rt=toCanonical(result); if(rt.tasks.length!==C.tasks.length) fails.push('Round trip changed the task count');
+  return { kind, label, hash, text, C, srcNorm, result, fails, notes, srcCounts:storeCounts(srcNorm), resCounts:storeCounts(result), srcRev:obj.rev!=null?obj.rev:(obj.source&&obj.source.rev), srcSaved:+obj.savedAt||(obj.source&&obj.source.savedAt)||null };
+}
+function fmtWhen(ts){ if(!ts) return '—'; const d=new Date(+ts); return d.getDate()+' '+MON[d.getMonth()]+' '+hhmm(+ts); }
+function hasOwnEdits(){ const last=DB.imports&&DB.imports.last; const n=countTasksIn(DB).tasks; if(!n) return false; if(!last) return true; return last.rev!==DB.rev; }
+function openImportPreview(P){
+  if(P.error){ openDialog(`<h3>Can’t use that</h3><p>${esc(P.error)}</p><div class="acts"><button class="save" data-x="ok">OK</button></div>`); dlg.querySelector('[data-x=ok]').addEventListener('click',closeDialog); return; }
+  const last=DB.imports&&DB.imports.last; const already=!!(last && last.hash===P.hash && !hasOwnEdits());
+  const rows=COUNT_ROWS.map(([k,l])=>`<tr><td>${l}</td><td style="text-align:right">${P.srcCounts[k]}</td><td style="text-align:right">${P.resCounts[k]}</td></tr>`).join('');
+  const bk=Object.keys(P.srcCounts.buckets).sort().map(k=>`<tr><td>${esc(k)}</td><td style="text-align:right">${P.srcCounts.buckets[k]}</td><td style="text-align:right">${P.resCounts.buckets[k]||0}</td></tr>`).join('');
+  const src = P.kind==='live'?'your current planner on this device':(P.label||'the file');
+  const edits=hasOwnEdits();
+  openDialog(`<h3>${P.kind==='live'?'Copy from my current planner':(P.kind==='file'?'Open a backup file':'Restore an earlier copy')}</h3>
+    <p class="subdesc" style="margin:2px 0 8px">Reading ${esc(src)} — read only, nothing there changes.${P.srcRev!=null?' Its revision '+esc(String(P.srcRev))+', saved '+fmtWhen(P.srcSaved)+'.':''}</p>
+    <table style="width:100%;border-collapse:collapse;font-size:13px" id="imp-counts"><tr><th style="text-align:left">&nbsp;</th><th style="text-align:right">There</th><th style="text-align:right">Copy</th></tr>${rows}</table>
+    <details style="margin-top:6px"><summary style="cursor:pointer;min-height:32px">Details by week</summary><div style="max-height:220px;overflow:auto"><table style="width:100%;font-size:12px">${bk}</table></div></details>
+    ${P.notes.length?`<div class="conn-d" style="margin-top:6px">${P.notes.slice(0,6).map(esc).join('<br>')}${P.notes.length>6?'<br>… and '+(P.notes.length-6)+' more':''}</div>`:''}
+    ${P.fails.length?`<div class="conn-warn" style="margin-top:8px"><b>Stopped — nothing written.</b><br>${P.fails.map(esc).join('<br>')}</div>`:''}
+    ${already?`<p style="margin-top:8px"><b>Already copied — nothing new.</b></p>`:''}
+    ${(!already && !P.fails.length && edits)?`<p class="conn-d" style="margin-top:8px" id="imp-edits">This 2.7 copy has changes of its own since it was last filled. They are kept as an undo copy if you go ahead.</p>`:''}
+    <div class="acts"><button class="cancel" data-x="c" style="min-height:44px">${already||P.fails.length?'Close':'Cancel'}</button>${(!already && !P.fails.length)?`<button class="save" data-x="apply" style="min-height:44px">${edits?'Replace this copy':'Copy it in'}</button>`:''}</div>`);
+  dlg.querySelector('[data-x=c]').addEventListener('click',closeDialog);
+  const ap=dlg.querySelector('[data-x=apply]'); if(!ap) return;
+  let armed=!edits;
+  ap.addEventListener('click',()=>{ if(!armed){ armed=true; ap.textContent='Tap again to replace'; return; } applyImport(P); });
+}
+function applyImport(P){
+  const prevText=JSON.stringify(Object.assign({},DB,{_uid:UID})); const prevDB=DB;
+  try{ localStorage.setItem(SNAP_IMPORT, JSON.stringify({ at:Date.now(), label:'Before '+(P.kind==='live'?'copying from the current planner':'opening '+(P.label||'a file')), text:prevText })); }
+  catch(e){ closeDialog(); openDialog(`<h3>Not enough room for an undo copy</h3><p>This device has no space left to keep the current 2.7 data as an undo copy, so nothing was changed. Save a backup file first (More → Backup), then clear Earlier copies.</p><div class="acts"><button class="save" data-x="ok">OK</button></div>`); dlg.querySelector('[data-x=ok]').addEventListener('click',closeDialog); return; }
+  const next=JSON.parse(JSON.stringify(P.result));
+  next.imports=Object.assign({}, DB.imports||{}); next.imports[P.hash.slice(0,16)]={ at:Date.now(), kind:P.kind, tasks:P.resCounts.tasks };
+  next.schema='p27-store/1';
+  migrate(next); reseedUID(next);
+  next.rev=Math.max(Number.isInteger(DB.rev)?DB.rev:0, Number.isInteger(next.rev)?next.rev:0);
+  next.imports.last={ hash:P.hash, at:Date.now(), kind:P.kind, rev:next.rev+1 };
+  DB=next; ui.weekKey=null; ui.claudeReads={};
+  saveDB();
+  if(persistState.error){ DB=prevDB; writeStore(prevText); closeDialog(); openDialog(`<h3>Not enough space on this device</h3><p>The copy did not fit, so nothing was changed. Your 2.7 data is as it was.</p><div class="acts"><button class="save" data-x="ok">OK</button></div>`); dlg.querySelector('[data-x=ok]').addEventListener('click',closeDialog); render(); return; }
+  let reread=null; try{ reread=JSON.parse(localStorage.getItem(STORE_KEY)); }catch(e){}
+  const fails=reread?assertSame(P.result, reread, false):['Could not read back what was written'];
+  const c=reread?storeCounts(reread):null;
+  closeDialog(); render();
+  openDialog(`<h3>${fails.length?'Copied — but the check found a difference':'Copied'}</h3>
+    <p>${P.kind==='live'?'Live planner not changed. ':''}This copy now has <b>${c?c.tasks:'?'}</b> tasks (${c?c.done:'?'} done), ${c?c.subs:'?'} sub-tasks, ${c?c.weeks:'?'} weeks, ${c?c.rules:'?'} repeat rules, ${c?c.projects:'?'} projects.</p>
+    ${fails.length?`<div class="conn-warn">${fails.map(esc).join('<br>')}<br>Use “Undo last copy” in More to go back.</div>`:''}
+    <div class="acts"><button class="cancel" data-x="undo" style="min-height:44px">Undo</button><button class="save" data-x="ok" style="min-height:44px">OK</button></div>`);
+  dlg.querySelector('[data-x=ok]').addEventListener('click',closeDialog);
+  dlg.querySelector('[data-x=undo]').addEventListener('click',()=>{ closeDialog(); undoImport(); });
+}
+function undoImport(){
+  let snap=null; try{ snap=JSON.parse(localStorage.getItem(SNAP_IMPORT)||'null'); }catch(e){}
+  if(!snap||!snap.text){ flashToast('No undo copy on this device'); return; }
+  saveEarlierCopy('Before undoing a copy', JSON.stringify(Object.assign({},DB,{_uid:UID})));
+  const o=JSON.parse(snap.text); migrate(o); reseedUID(o); o.rev=Math.max(Number.isInteger(DB.rev)?DB.rev:0, Number.isInteger(o.rev)?o.rev:0);
+  DB=o; ui.weekKey=null; saveDB();
+  if(!persistState.error){ try{ localStorage.removeItem(SNAP_IMPORT); }catch(e){} }
+  render(); flashToast('Back to how it was before the copy');
+}
+async function importFromLive(){
+  const text=readLiveStoreReadOnly();
+  if(!text){ openImportPreview({ error:'No current planner was found on this device in this browser. Open the live planner here once, or use “Open a backup file”.' }); return; }
+  openImportPreview(await buildImport(text, 'live', 'your current planner'));
+}
+function importFromFile(){
+  const inp=document.createElement('input'); inp.type='file'; inp.accept='.json,application/json'; inp.style.display='none';
+  inp.addEventListener('change', async()=>{ const f=inp.files&&inp.files[0]; inp.remove(); if(!f) return; const text=await f.text(); openImportPreview(await buildImport(text, 'file', f.name)); });
+  document.body.appendChild(inp); inp.click();
+}
+async function restoreEarlier(i){
+  const list=earlierAll(); const e=list[i]; if(!e) return;
+  openImportPreview(await buildImport(e.text, 'earlier', e.label+' ('+fmtWhen(e.at)+')'));
+}
+function earlierAll(){ const L=earlierCopies().slice().reverse(); try{ const d=JSON.parse(localStorage.getItem('p27:snap:day')||'null'); if(d&&d.text) L.push({ at:d.at, label:'First open on '+d.date, text:d.text }); }catch(e){} return L; }
+function exportCanonical(){ const C=toCanonical(JSON.parse(exportShape())); C.source.app='2.7'; delete C.notes; download('planner27-for-claude-planner-'+todayISO+'.json', JSON.stringify(C,null,1), 'application/json'); }
+function importBackupHTML(){
+  const row=(h,sub,act)=>`<button class="softbtn" data-act="${act}" style="flex:1 1 100%;min-height:52px"><div class="h">${h}</div><div class="s">${sub}</div></button>`;
+  let snap=null; try{ snap=JSON.parse(localStorage.getItem(SNAP_IMPORT)||'null'); }catch(e){}
+  const ec=earlierAll(); const big=p27Usage()>1048576;
+  return `<div class="eyebrow">Import &amp; backup<span class="ln"></span></div>
+    <div class="softrow">${row('Copy from my current planner','Reads the planner you use now on this device · read only','imp-live')}</div>
+    <div class="softrow">${row('Open a backup file','A backup from either planner, or a copy for Claude Planner','imp-file')}</div>
+    <div class="softrow">${row('⬇ Backup (JSON)','One-click full backup of all weeks','backup')}${row('Save a copy for Claude Planner','The same data in the shared format','exp-canon')}</div>
+    ${snap?`<div class="softrow">${row('Undo last copy','Back to how this copy was at '+fmtWhen(snap.at),'imp-undo')}</div>`:''}
+    ${ec.length?`<div class="eyebrow" style="margin-top:6px">Earlier copies<span class="ln"></span></div><div class="list">${ec.map((e,i)=>`<div class="t"><span class="lab">${esc(e.label)} <span class="subdesc">${fmtWhen(e.at)}</span></span><button class="addmini" data-act="earlier-restore" data-i="${i}" style="min-height:36px;padding:0 12px">Restore</button></div>`).join('')}</div>`:''}
+    ${big?`<div class="conn-warn" style="margin-top:6px">This planner is using ${(p27Usage()/1048576).toFixed(1)} MB of this browser’s storage. Earlier copies are cleared first if space runs out.</div>`:''}`;
+}
+/* 4.3 paste from Claude: deterministic ids p:<batch8>:<key>, explicit 'when' vocabulary, never defaults to today */
+function parseWhen(when){
+  const w=String(when==null?'':when).toLowerCase().trim(); const tm=todayMonday;
+  if(!w || w==='future' || w==='pool' || w==='unscheduled') return { week:tm, di:'F' };
+  let m;
+  if((m=/^pool (\d{4}-\d{2}-\d{2})$/.exec(w))) return { week:mondayOfISO(m[1]), di:'F' };
+  if(w==='weekend') return { week:tm, di:'W' };
+  if((m=/^weekend (\d{4}-\d{2}-\d{2})$/.exec(w))) return { week:mondayOfISO(m[1]), di:'W' };
+  if(w==='next week') return { week:addDays(tm,7), di:'F' };
+  if((m=/^in ([1-8]) weeks?$/.exec(w))) return { week:addDays(tm,7*+m[1]), di:'F' };
+  if(w==='today') return { week:tm, di:todayDayIdx() };
+  if(w==='tomorrow'){ const iso=addDays(todayISO,1); return { week:mondayOfISO(iso), di:localDow(iso) }; }
+  const full=['monday','tuesday','wednesday','thursday','friday','saturday','sunday']; let di=full.indexOf(w); if(di<0) di=DOW.findIndex(d=>d.toLowerCase()===w);
+  if(di>=0) return addDays(tm,di)<todayISO ? { week:addDays(tm,7), di } : { week:tm, di };
+  if(/^\d{4}-\d{2}-\d{2}$/.test(w)){ const [y,mo,d]=w.split('-').map(Number); const dt=new Date(y,mo-1,d); if(dt.getFullYear()!==y||dt.getMonth()!==mo-1||dt.getDate()!==d) return null; return { week:mondayOfISO(w), di:localDow(w) }; }
+  return null;
+}
+async function importClaude(text){
+  const data=JSON.parse(text);
+  if(!data || !Array.isArray(data.tasks)) throw new Error('no "tasks" list found — expected { "tasks": [ … ] }');
+  const batch=(data.batch!=null && data.batch!=='') ? String(data.batch) : await sha1hex(stableJSON(data)); const b8=fnv36(batch).slice(0,8).padStart(8,'0');
+  const bkey='p:'+b8; DB.imports=DB.imports||{}; const prior=DB.imports[bkey];
+  const findProj=v=>{ if(!v)return null; const p=(DB.projects||[]).find(x=>x.id===v||String(x.name).toLowerCase()===(''+v).toLowerCase()); return p?p.id:null; };
+  const ids=allIdSet(); let added=0, skipped=0; const refused=[];
+  data.tasks.forEach((o,i)=>{ if(!o||!String(o.label||'').trim()){ refused.push('item '+(i+1)+' has no label'); return; }
+    const tgt=parseWhen(o.when); if(!tgt){ refused.push('“'+String(o.label).slice(0,50)+'” — “'+o.when+'” is not a day I understand'); return; }
+    const key=(o.key!=null&&o.key!=='')?String(o.key):String(i); const id='p:'+b8+':'+key;
+    if(ids.has(id)){ skipped++; return; }
+    const kind=o.kind==='work'?'work':'personal'; const wk=ensureWeek(tgt.week);
+    const t=T(String(o.label).trim(), kind, {time:o.time||null, repeat:o.repeat||null, projectId:findProj(o.project), claude:o.claude||null, remind:o.remind||null});
+    t.id=id; t.subs=(Array.isArray(o.subs)?o.subs:[]).map((x,j)=>({ id:'s:'+id+':'+j, label:typeof x==='string'?x:((x&&x.label)||''), done:false }));
+    colArr(wk,tgt.di,kind).push(t); ids.add(id); added++; });
+  DB.imports[bkey]=prior?Object.assign({}, prior, {again:Date.now()}):{ at:Date.now(), n:added };
+  return { added, skipped, refused, prior };
+}
 function openPaste(){
   openDialog(`<h3>Paste tasks from Claude</h3><p>Paste the JSON capture — <code>{ "tasks":[…] }</code>. Imports into the right day/lane, nothing overwritten.</p>
-    <textarea id="f-json" placeholder='{ "tasks": [ { "label":"…", "kind":"work", "when":"today" } ] }'></textarea>
+    <textarea id="f-json" placeholder='{ "tasks": [ { "label":"…", "kind":"work", "when":"next week" } ] }'></textarea>
+    <p id="f-err" class="conn-warn" style="display:none"></p>
     <div class="acts"><button class="cancel" data-x="cancel">Cancel</button><button class="save" data-x="save">Import</button></div>`);
   dlg.querySelector('[data-x="cancel"]').addEventListener('click',closeDialog);
-  dlg.querySelector('[data-x="save"]').addEventListener('click',()=>{
-    let n=0; try{ n=importClaude(dlg.querySelector('#f-json').value); }catch(e){ alert('Could not read that JSON: '+e.message); return; }
-    closeDialog(); saveDB(); render(); flashToast(`Imported ${n} task${n!==1?'s':''}`);
+  dlg.querySelector('[data-x="save"]').addEventListener('click',async()=>{
+    const g=_dlgGen; let r;
+    try{ r=await importClaude(dlg.querySelector('#f-json').value); }
+    catch(e){ const er=dlg.querySelector('#f-err'); if(er){ er.textContent='Could not read that: '+e.message; er.style.display='block'; } return; }   /* 2.7: no alert() */
+    if(r.added) saveDB(); else if(!r.prior) saveDB();
+    render();
+    if(!dlgIs(g)) return;
+    const head = (r.prior && !r.added) ? `Already imported on ${fmtWhen(r.prior.at)} — 0 added` : `Added ${r.added} task${r.added!==1?'s':''}`;
+    dlg.innerHTML=`<div class="dlg"><h3>${head}</h3>${r.skipped&&r.added?`<p>${r.skipped} were already here and were skipped.</p>`:''}${r.refused.length?`<p><b>Not placed (${r.refused.length}):</b><br>${r.refused.map(esc).join('<br>')}</p><p class="subdesc">Fix the day words and paste again — the ones already added won’t be added twice.</p>`:''}<div class="acts"><button class="save" data-x="ok" style="min-height:44px">OK</button></div></div>`;
+    dlg.querySelector('[data-x=ok]').addEventListener('click',closeDialog);
   });
 }
 function whenToTarget(when){
@@ -2590,21 +3106,7 @@ function whenToTarget(when){
   if(/^\d{4}-\d{2}-\d{2}$/.test(when)){ return [isoMonday(when), ((new Date(when).getDay()+6)%7)]; }
   return [todayMonday, todayDayIdx()];
 }
-function importClaude(text){
-  const data=JSON.parse(text);
-  if(!Array.isArray(data.tasks)) throw new Error('no "tasks" array found — expected { "tasks": [ … ] }');
-  const tasks=data.tasks; let n=0;
-  const findProj=v=>{ if(!v)return null; const p=(DB.projects||[]).find(x=>x.id===v||x.name.toLowerCase()===(''+v).toLowerCase()); return p?p.id:null; };
-  tasks.forEach(o=>{
-    let [wKey,di]=whenToTarget(o.when);
-    const wk=ensureWeek(wKey==='F'?todayMonday:wKey);
-    const kind=o.kind==='work'?'work':'personal';
-    const arr = wKey==='F'?wk.future[kind]:colArr(wk,di,kind);
-    arr.push(T(o.label, kind, {time:o.time||null, subs:(o.subs||[]), repeat:o.repeat||null, projectId:findProj(o.project), claude:o.claude||null, remind:o.remind||null}));
-    n++;
-  });
-  return n;
-}
+/* 2.7: the v2.4 importClaude() was replaced by the deterministic one in the Step 4 block. */
 
 /* ============================================================
    EXPORTS
@@ -2665,6 +3167,18 @@ function flashToast(msg){
   clearTimeout(toastT); toastT=setTimeout(()=>{ el.style.opacity='0'; el.style.transform='translateX(-50%) translateY(16px)'; }, 1400);
 }
 function flashSaved(){ /* subtle, reserved for future sync indicator */ }
+/* 2.7: toast with an Undo button (7 s). The undo function must be safe to run against the current DB. */
+let _undoT=null;
+function flashUndo(msg, fn){
+  let el=document.getElementById('undotoast');
+  if(!el){ el=document.createElement('div'); el.id='undotoast'; el.setAttribute('role','status'); el.style.cssText='position:fixed;left:50%;transform:translateX(-50%);background:var(--ink,#2a2622);color:#fff;font-size:13px;font-weight:600;padding:6px 6px 6px 16px;border-radius:22px;z-index:1001;display:flex;align-items:center;gap:12px;box-shadow:var(--shadow-2);max-width:92vw'; document.body.appendChild(el); }
+  el.style.bottom = isLap() ? '24px' : 'calc(var(--tabh, 64px) + 18px)';
+  el.innerHTML=`<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(msg)}</span><button type="button" data-undo style="min-height:36px;padding:0 14px;border-radius:18px;border:0;background:#fff;color:var(--ink,#2a2622);font-weight:700;cursor:pointer">Undo</button>`;
+  el.style.display='flex';
+  const t=document.getElementById('toast'); if(t) t.style.opacity='0';
+  el.querySelector('[data-undo]').onclick=()=>{ el.style.display='none'; clearTimeout(_undoT); try{ fn(); }catch(e){ console.error(e); } };
+  clearTimeout(_undoT); _undoT=setTimeout(()=>{ el.style.display='none'; }, 7000);
+}
 
 /* ============================================================
    DRAG (laptop week) + SWIPE (phone day)
@@ -2726,6 +3240,7 @@ document.addEventListener('pointerdown', e=>{
     let newIdx=[...tgt.querySelectorAll('.t')].indexOf(row); if(newIdx<0)newIdx=tgtArr.length;
     // account for timed-sort: just push then sort handled on render
     tgtArr.splice(newIdx,0,srcObj);
+    noteMove(srcObj, place(ctx.wk.key, ctx.di, ctx.kind), place(wk.key, di, kind), 'mv');
     saveDB(); render();
     /* v2.2: confirm the drop visibly — sortTimed can relocate the row, the flash lets the eye re-acquire it */
     requestAnimationFrame(()=>{ const el=document.querySelector('.t[data-id="'+srcObj.id+'"]'); if(el){ el.classList.add('dropflash'); setTimeout(()=>{ el.classList.remove('dropflash'); }, 500); } });
@@ -4044,7 +4559,7 @@ function claudeFill(pid){
      as well. One move per tap. */
   if(Date.now()-_fillAt<1200) return; _fillAt=Date.now();
   const wk=ensureWeek(todayMonday); let di=todayDayIdx(), moved=0;
-  ts.slice(0,3).forEach(x=>{ const arr=x.wk.future[x.kind]; const pos=arr.indexOf(x.t); if(pos>=0)arr.splice(pos,1); wk.days[Math.min(di,6)][x.kind].push(x.t); di++; moved++; });
+  ts.slice(0,3).forEach(x=>{ const arr=x.wk.future[x.kind]; const pos=arr.indexOf(x.t); if(pos>=0)arr.splice(pos,1); wk.days[Math.min(di,6)][x.kind].push(x.t); noteMove(x.t, place(x.wk.key,'F',x.kind), place(wk.key,Math.min(di,6),x.kind), 'mv'); di++; moved++; });
   saveDB(); flashToast(`Moved ${moved} project step${moved!==1?'s':''} into this week`); renderProjectDetail(pid);
 }
 
@@ -4055,6 +4570,9 @@ function checkReminders(){ const now=Date.now(); let fired=false; allReminders()
 
 /* ---------- boot ---------- */
 DB=loadDB();
+/* 2.7 (3.7): first open each day keeps one copy of the store as it was (expendable; skipped when large). */
+try{ const raw=localStorage.getItem(STORE_KEY); const today=computeTodayISO(); const cur=JSON.parse(localStorage.getItem('p27:snap:day')||'null');
+  if(raw && (!cur || cur.date!==today) && raw.length<1.2e6 && p27Usage()+raw.length<3.2e6) localStorage.setItem('p27:snap:day', JSON.stringify({date:today, at:Date.now(), text:raw})); }catch(e){}
 // Web Share Target: text shared from iOS lands in the brain-dump inbox
 (function(){ try{ const p=new URLSearchParams(location.search); if(!p.get('code')&&!p.get('error')){ const shared=[p.get('text'),p.get('title'),p.get('url')].filter(Boolean).join(' ').trim(); if(shared){ DB.inbox=DB.inbox||[]; DB.inbox.unshift({label:shared}); window.__sharedBoot=true; try{ saveLocalOnly(); }catch(e){} try{ history.replaceState({},'',location.pathname); }catch(e){} }   /* v2.2: a shared thought is persisted the moment it lands (rev-inert) — it can no longer die in memory */ } }catch(e){} })();
 try{ loadCalCache(); }catch(e){}
@@ -4069,7 +4587,12 @@ watchDate();
 primeReminders();
 setInterval(checkReminders, 60000);
 
+/* 2.7: test/diagnostic handle. Read-mostly; nothing here runs on its own. */
+window.__p27 = { get DB(){ return DB; }, buildImport, toCanonical, fromCanonical, storeCounts, parseWhen, applyImport, undoImport, earlierCopies, p27Usage, replayOnto, saveDB, exportShape, putBack, findTaskById, allIdSet, ruleId, odWrite, odDelete, odNameOk, readLiveStoreReadOnly, persistState, odState, syncLabel };
 // Register the service worker (offline-first). Harmless if unsupported.
+/* 2.7 (review item 7): the live planner's service worker deletes every cache not named planner-v1 when it
+   activates, so this copy's shell cache can vanish. On each online open, re-add it if it is missing. */
+try{ if(navigator.onLine && 'caches' in window){ caches.has('planner27-v1').then(h=>{ if(!h) return caches.open('planner27-v1').then(c=>c.addAll(['./','./index.html','./manifest.webmanifest','./icon-192.png','./icon-512.png','./apple-touch-icon.png'])); }).catch(()=>{}); } }catch(e){}
 if('serviceWorker' in navigator){ window.addEventListener('load', ()=>{ navigator.serviceWorker.register('sw.js').catch(()=>{}); }); }
 </script>
 <template id="__bundler_thumbnail"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" fill="#efe8da"/><rect x="112" y="112" width="288" height="288" rx="58" fill="#bd5f37"/><text x="256" y="278" font-family="-apple-system,Segoe UI,sans-serif" font-size="150" font-weight="700" fill="#fbeede" text-anchor="middle" dominant-baseline="middle">P</text></svg></template>
